@@ -15,9 +15,16 @@
                        broken shortcuts, empty Start menu folders, scheduled tasks of the program
          unchecked ... folders and registry keys with the program's name (likely theirs, not certain),
                        big install folders (usually your data), anything of a program whose uninstaller
-                       was missing, and anything too big for the Recycle Bin
+                       was missing, anything too big for the Recycle Bin, and the program's own folders in
+                       your user profile and on other drives: what uninstallers usually leave behind
+       Where it looks, besides Program Files and AppData: your own folder (so .config\<app>, .cache\<app>
+       and .local\share\<app> show up), Documents, Saved Games, the folders shared by all users, and the
+       usual folder names on the root of each fixed drive (D:\Games\<app>, or a portable copy at D:\<app>).
+       Each folder found there comes with what it holds (settings, cache, your data or files you made), how
+       many files and when it changed, so you can tell whether deleting it makes sense. None comes checked.
        Never touches Windows, Program Files/ProgramData/AppData themselves, Common Files, Microsoft folders,
-       your Desktop/Documents/Downloads, links, or any folder an installed program still uses.
+       the profile folders themselves (Desktop, Documents, Downloads, OneDrive, links), sensitive folders
+       like .ssh and .gnupg, links, or any folder an installed program still uses.
     4. Deletes only what you confirm: folders and shortcuts go to the Recycle Bin (what doesn't fit asks
        again, one by one, before being deleted for good); registry keys and scheduled tasks are exported
        first to %ProgramData%\TidyWin\uninstall-backup\<date>, with a deleted.txt listing everything
@@ -507,6 +514,23 @@ $FolderRoots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ProgramData, 
 # Registry places searched for keys with the program's name (Software\<name> and Software\<publisher>\<name>).
 $RegistryRoots = @('HKCU:\SOFTWARE', 'HKLM:\SOFTWARE', 'HKLM:\SOFTWARE\WOW6432Node')
 
+# Under the user's profile a program keeps its own folders: settings, cache, data and the files you made
+# with it. These are what stays after a normal uninstall, which only removes the install folder.
+# Flavor: what a folder there usually holds, for the line that says what goes away with it.
+$UserRoots = @(
+    @{ Path = $env:USERPROFILE;                           Flavor = 'Profile'   }
+    @{ Path = (Join-Path $env:USERPROFILE '.config');      Flavor = 'Settings'  }
+    @{ Path = (Join-Path $env:USERPROFILE '.cache');       Flavor = 'Cache'     }
+    @{ Path = (Join-Path $env:USERPROFILE '.local\share'); Flavor = 'Data'      }
+    @{ Path = (Join-Path $env:USERPROFILE '.local\state'); Flavor = 'Data'      }
+    @{ Path = [Environment]::GetFolderPath('MyDocuments'); Flavor = 'Documents' }
+    @{ Path = (Join-Path $env:USERPROFILE 'Saved Games');  Flavor = 'Documents' }
+    @{ Path = $env:PUBLIC;                                 Flavor = 'Shared'    }
+) | Where-Object { $_.Path -and (Test-Path -LiteralPath $_.Path) }
+
+# Container folders where a program (or a game) may sit on another drive: D:\Games\<app>, C:\Apps\<app>...
+$DriveContainers = @('games', 'jogos', 'apps', 'aplicativos', 'programs', 'programas', 'portable', 'software', 'tools')
+
 # Names never offered, as a folder or a key: they belong to Windows or are shared by many programs.
 $ProtectedNames = @('microsoft', 'windows', 'common files', 'commonfiles', 'packages', 'programs', 'temp', 'classes',
                     'policies', 'wow6432node', 'intel', 'nvidia corporation', 'amd', 'realtek', 'google', 'mozilla',
@@ -514,6 +538,17 @@ $ProtectedNames = @('microsoft', 'windows', 'common files', 'commonfiles', 'pack
                     'windowsapps', 'windowspowershell', 'windows nt', 'windows defender', 'internet explorer',
                     'reference assemblies', 'msbuild', 'dotnet', 'microsoft.net', 'modifiablewindowsapps', 'clients',
                     'registeredapplications', 'odbc', 'crashdumps', 'd3dscache', 'fonts', 'history')
+
+# Folder names never offered, even when they match the program's name: Windows' shell folders, the folders
+# that hold every program's settings, and stores shared by many programs (or by your projects).
+$SharedNames = @('desktop', 'documents', 'downloads', 'music', 'pictures', 'videos', 'saved games', 'links',
+                 'favorites', 'searches', 'contacts', '3d objects', 'appdata', 'public', 'users', 'perflogs',
+                 'recovery', '$recycle.bin', 'system volume information',
+                 '.config', '.cache', '.local', '.ssh', '.gnupg', '.aws', '.azure', '.kube', '.docker',
+                 '.git', '.github', '.vscode', '.vscode-server', '.idea', '.venv', 'venv', 'node_modules',
+                 'npm', '.npm', '.yarn', '.pnpm-store', '.nuget', '.gradle', '.m2', '.cargo', '.rustup',
+                 '.conda', 'anaconda3', 'miniconda3', '.android', '.dotnet', 'source', 'repos', 'scoop',
+                 '.templateengine', '.ollama')
 
 # Folders a program uses: the registered install folder, and the folders of its icon and of its uninstaller
 # (many programs don't register the first). Windows' own folders are left out.
@@ -564,12 +599,15 @@ function Get-NameKey([string]$Name) {
 function Test-ProtectedPath([string]$Path, [string[]]$KeepLocations) {
     $full = $Path.TrimEnd('\')
     if ($full -match '^[A-Za-z]:$' -or $full -notmatch '^[A-Za-z]:\\') { return $true }      # a drive root, or not a local path
-    $never = @($env:SystemRoot, $env:USERPROFILE, (Join-Path $env:USERPROFILE 'AppData'),
+    $never = @($env:SystemRoot, $env:USERPROFILE, (Split-Path $env:USERPROFILE -Parent), $env:PUBLIC,
+               (Join-Path $env:USERPROFILE 'AppData'), [Environment]::GetFolderPath('CommonDocuments'),
                [Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('MyDocuments'),
                (Join-Path $env:USERPROFILE 'Downloads'), [Environment]::GetFolderPath('CommonDesktopDirectory')) + $FolderRoots
     if ($never | Where-Object { $_ -and $full -ieq $_.TrimEnd('\') }) { return $true }
     if ($full -like "$env:SystemRoot\*" -or $full -like '*\Common Files' -or $full -like '*\Common Files\*' -or $full -like '*\WindowsApps*') { return $true }
-    if ($ProtectedNames -contains (Split-Path $full -Leaf).ToLowerInvariant()) { return $true }
+    # The shell folders, the stores shared by many programs, and OneDrive (any account name) stay as they are
+    $leaf = (Split-Path $full -Leaf).ToLowerInvariant()
+    if ($ProtectedNames -contains $leaf -or $SharedNames -contains $leaf -or $leaf -like 'onedrive*') { return $true }
     $item = Get-Item -LiteralPath $full -Force -ErrorAction SilentlyContinue
     if ($item -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { return $true }
     foreach ($k in $KeepLocations) {
@@ -586,6 +624,76 @@ function Get-FolderSize([string]$Path) {
 $Shell = New-Object -ComObject WScript.Shell
 function Get-ShortcutTarget([string]$Path) {
     try { return $Shell.CreateShortcut($Path).TargetPath } catch { return '' }
+}
+
+# What a folder holds, read once: files, size and the newest file (when it was last used).
+function Get-FolderHoldings([string]$Path) {
+    $files = 0; $bytes = [int64]0; $newest = $null
+    foreach ($f in (Get-ChildItem -LiteralPath $Path -Recurse -File -Force -ErrorAction SilentlyContinue)) {
+        $files++
+        $bytes += $f.Length
+        if (-not $newest -or $f.LastWriteTime -gt $newest) { $newest = $f.LastWriteTime }
+    }
+    return [pscustomobject]@{ Files = $files; Size = $bytes; Newest = $newest }
+}
+
+# One line under a folder found in the user's profile: what it probably holds, how many files and when it
+# changed, so deleting it is a decision and not a guess. The place says most of it: the same folder is your
+# settings in .config and your own data in .local\share. (The size is added by the list, for every kind.)
+function Get-FlavorNote([string]$Flavor, [string]$Path, $Hold) {
+    $leaf = (Split-Path $Path -Leaf).ToLowerInvariant()
+    $what = switch ($Flavor) {
+        'Install'   { 'folder with the program''s name' }
+        'Cache'     { 'cache: built again the next time the program runs' }
+        'Data'      { 'data: may hold history, sessions or sign-ins' }
+        'Documents' { 'your files: made with the program, not by it' }
+        'Shared'    { 'shared by every user of this PC' }
+        'Settings'  { 'settings: your options for the program' }
+        default {
+            # Your own folder: the name of a dot folder says settings, a name with cache in it says cache
+            if ($leaf -match 'cache|tmp|temp|log|crashes') { 'cache: built again the next time the program runs' }
+            elseif ($leaf -match '^\.') { 'settings: your options for the program' }
+            else { 'data and settings the program kept here' }
+        }
+    }
+    $count = if ($Hold.Files) { "$($Hold.Files) file$(if ($Hold.Files -ne 1) { 's' })" } else { 'empty' }
+    $when  = if ($Hold.Newest) { 'changed ' + $Hold.Newest.ToString('d') } else { '' }
+    return (@($what, $count, $when) | Where-Object { $_ }) -join ' · '
+}
+
+# Fixed drives only, read once: removable, network and CD drives are slow or not always there.
+function Get-DriveRoots {
+    if ($null -eq $script:FixedDrives) {
+        $script:FixedDrives = @(foreach ($d in [IO.DriveInfo]::GetDrives()) {
+            try { if ($d.DriveType -eq 'Fixed' -and $d.IsReady) { $d.RootDirectory.FullName } } catch { }
+        })
+    }
+    return $script:FixedDrives
+}
+
+# The program's folders inside one root, to offer: a folder named after the program, or the publisher's
+# folder holding one. Nothing is decided here: the caller turns each into a leftover, none of them checked.
+# Returns items with Path, Reason and Size.
+function Add-RootFolders([string]$Root, [string]$Flavor, [string[]]$Names, [string]$Publisher, [string[]]$KeepLocations) {
+    $foundHere = New-Object System.Collections.Generic.List[object]
+    foreach ($dir in (Get-ChildItem -LiteralPath $Root -Directory -Force -ErrorAction SilentlyContinue)) {
+        if (Test-ProtectedPath $dir.FullName $KeepLocations) { continue }
+        $key = Get-NameKey $dir.Name
+        if ($Names -contains $key) {
+            $hold = Get-FolderHoldings $dir.FullName
+            $foundHere.Add([pscustomobject]@{ Path = $dir.FullName; Reason = (Get-FlavorNote $Flavor $dir.FullName $hold); Size = $hold.Size })
+            continue
+        }
+        # The publisher's folder holding the program's own: Documents\Rockstar Games\Launcher
+        if ($Publisher.Length -ge 3 -and $key -eq $Publisher) {
+            foreach ($sub in (Get-ChildItem -LiteralPath $dir.FullName -Directory -Force -ErrorAction SilentlyContinue)) {
+                if ($Names -notcontains (Get-NameKey $sub.Name) -or (Test-ProtectedPath $sub.FullName $KeepLocations)) { continue }
+                $hold = Get-FolderHoldings $sub.FullName
+                $foundHere.Add([pscustomobject]@{ Path = $sub.FullName; Reason = (Get-FlavorNote $Flavor $sub.FullName $hold); Size = $hold.Size })
+            }
+        }
+    }
+    return $foundHere.ToArray()
 }
 
 # What a removed program left behind. $KeepLocations: folders of programs still installed; $KeepNames:
@@ -633,20 +741,25 @@ function Find-Leftovers($Program, [string[]]$KeepLocations, [string[]]$KeepNames
         else { & $add 'Folder' $location 'install folder that remained' $true $size }
     }
 
-    # 2. Folders with the program's name, and <publisher>\<name> (unchecked: likely theirs, not certain)
-    foreach ($root in $FolderRoots) {
-        foreach ($dir in (Get-ChildItem -LiteralPath $root -Directory -Force -ErrorAction SilentlyContinue)) {
-            $key = Get-NameKey $dir.Name
-            if ($names -contains $key -and -not (Test-ProtectedPath $dir.FullName $KeepLocations)) {
-                & $add 'Folder' $dir.FullName 'folder with the program''s name' $false (Get-FolderSize $dir.FullName)
+    # 2. Folders with the program's name, and <publisher>\<name>. The install places (Program Files, AppData,
+    #    ProgramData) and also the places a normal uninstall never touches: your own profile (.config\<app>,
+    #    .cache\<app>, Documents\<app>...), the folders shared by all users, and the usual container folders
+    #    on each fixed drive, plus the drive root itself (D:\Games\<app>, D:\<app>). Unchecked: likely
+    #    theirs, not certain; each one says what it holds, so you can tell whether deleting it makes sense.
+    $places = @(
+        foreach ($root in $FolderRoots) { @{ Path = $root; Flavor = 'Install' } }
+        foreach ($root in $UserRoots) { @{ Path = $root.Path; Flavor = $root.Flavor } }
+        foreach ($drive in (Get-DriveRoots)) {
+            @{ Path = $drive; Flavor = 'Install' }              # a portable copy left at the root: D:\<app>
+            foreach ($container in $DriveContainers) {
+                $dir = Join-Path $drive $container
+                if (Test-Path -LiteralPath $dir) { @{ Path = $dir; Flavor = 'Install' } }
             }
-            elseif ($publisher.Length -ge 3 -and $key -eq $publisher -and $ProtectedNames -notcontains $dir.Name.ToLowerInvariant()) {
-                foreach ($sub in (Get-ChildItem -LiteralPath $dir.FullName -Directory -Force -ErrorAction SilentlyContinue)) {
-                    if ($names -contains (Get-NameKey $sub.Name) -and -not (Test-ProtectedPath $sub.FullName $KeepLocations)) {
-                        & $add 'Folder' $sub.FullName 'folder with the program''s name, inside the publisher''s' $false (Get-FolderSize $sub.FullName)
-                    }
-                }
-            }
+        }
+    )
+    foreach ($place in $places) {
+        foreach ($f in (Add-RootFolders $place.Path $place.Flavor $names $publisher $KeepLocations)) {
+            & $add 'Folder' $f.Path $f.Reason $false $f.Size
         }
     }
 
@@ -780,7 +893,7 @@ if ($Describe) {
         } else {
             New-Field $T 'Nothing' 'header' 'No programs found' 'Nothing on this PC can be uninstalled from here.' $null
         }
-        New-Field $T 'Leftovers' 'toggle' 'Remove leftovers' 'What is certainly theirs goes right away: the install folder that remained, broken shortcuts, empty Start menu folders and their scheduled tasks. What only might be theirs, like folders with their name or your data, is listed at the end for you to pick, nothing checked. Folders go to the Recycle Bin; registry keys and tasks are backed up first.' $false @{ footer = $true }
+        New-Field $T 'Leftovers' 'toggle' 'Remove leftovers' 'What is certainly theirs goes right away: the install folder that remained, broken shortcuts, empty Start menu folders and their scheduled tasks. What only might be theirs is listed at the end for you to pick, nothing checked: folders with their name in Program Files and AppData, in your own folder (settings in .config, cache in .cache, your files in Documents and Saved Games) and on other drives (D:\Games\<app>). Each one says what it holds, so you can tell whether deleting it makes sense. Folders go to the Recycle Bin; registry keys and tasks are backed up first.' $false @{ footer = $true }
     )
     Write-OptionsPage $Describe $fields @('Each program opens its own uninstaller: follow its window. Close the programs before you start.')
     return
@@ -870,7 +983,7 @@ if ($removed -and $lookForLeftovers) {
             if ($unsure) {
                 foreach ($u in $unsure) { $u.Checked = $false }
                 Write-Host "  $($unsure.Count) item(s) may be theirs: pick the ones to delete." -ForegroundColor DarkGray
-                foreach ($u in $unsure) { $u.Note = (@($KindLabels[$u.Leftover.Kind], (Format-Size $u.Size)) | Where-Object { $_ }) -join ' • ' }
+                foreach ($u in $unsure) { $u.Note = (@($KindLabels[$u.Leftover.Kind], $u.Leftover.Reason, (Format-Size $u.Size)) | Where-Object { $_ }) -join ' • ' }
                 $picked = @(Select-Items 'Leftovers to delete' $unsure -Short)
                 $toDelete += $picked
                 $kept = @($unsure | Where-Object { $picked -notcontains $_ })

@@ -101,6 +101,7 @@ function Get-Menu {
         New-MenuEntry $care 'uninstall' 'E74D' 'Remove apps' 'Remove apps' 'Remove programs and what they leave behind.' @(
             'Runs the official uninstaller of each program you pick.'
             'Then lists the leftover folders, registry keys and shortcuts.'
+            'Finds folders in your own profile too, and says what each one holds.'
             'Deletes only what you confirm: folders go to the Recycle Bin and registry keys are backed up.'
         ) 'Uninstall' @(New-Step 'apps/uninstall-apps.ps1') -Form
 
