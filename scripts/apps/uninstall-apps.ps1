@@ -33,6 +33,8 @@
        (double-click a .reg file to put a key back). What still holds a folder (a tray icon the uninstaller
        left) is closed first when the option is on; otherwise it is named, gets half a minute, and is kept.
        Only processes running from the program's own folders are ever ended, never by name.
+    5. Ends with a summary: what each program became, what was closed, and what stayed on disk because
+       something is still using it.
 
     FILE LAYOUT
         1. Helpers ................... prompts, checklist with search
@@ -571,6 +573,11 @@ function Get-ProgramFolders($Program) {
              Select-Object -Unique)
 }
 
+# What the page closed to get the job done, and what stayed on disk because something is still using it: the
+# summary at the end reads these (program name -> 'closed' or 'ended', and one entry per kept item).
+$script:ClosedPrograms = @{}
+$script:KeptItems = @()
+
 # Bytes the Recycle Bin of a drive takes in one item; 0 = no Recycle Bin there (removable/network drive,
 # or set to delete at once). Windows deletes for good, WITHOUT asking, what doesn't fit, so those items
 # are flagged and need a separate confirmation.
@@ -965,6 +972,7 @@ function Close-OpenPrograms([object[]]$Processes) {
         if     ($state[$name] -eq 'closed') { Write-Result 'OK' "Closed $name" }
         elseif ($state[$name] -eq 'ended')  { Write-Result 'OK' "Ended $name (it did not close by itself)" }
         else                                { Write-Result 'ERROR' "$($name): $($state[$name])" }
+        $script:ClosedPrograms[$name] = $state[$name]      # for the summary at the end
     }
 }
 
@@ -988,6 +996,26 @@ function Close-LeftoverHolders([object[]]$Items, [object[]]$Programs) {
     if (-not $open) { return }
     Write-Step 'Closing what still holds the leftovers'
     Close-OpenPrograms $open
+}
+
+# The printed summary: what the page closed, and what stayed on disk because something is still using it
+function Write-ClosedSummary {
+    if ($script:ClosedPrograms.Count) {
+        Write-Host ''
+        foreach ($name in @($script:ClosedPrograms.Keys | Sort-Object)) {
+            $how = $script:ClosedPrograms[$name]
+            if     ($how -eq 'closed') { Write-Host "  $name was closed." }
+            elseif ($how -eq 'ended')  { Write-Host "  $name did not close by itself, so it was ended. What was not saved is lost." -ForegroundColor Yellow }
+            else                       { Write-Host "  ${name}: $how" -ForegroundColor Yellow }
+        }
+    }
+    if ($script:KeptItems.Count) {
+        Write-Host ''
+        Write-Host '  Kept, because something is still using them:' -ForegroundColor Yellow
+        foreach ($kept in $script:KeptItems) {
+            Write-Host "    - $($kept.Path): still in use ($($kept.Holder)). Close it and delete the $($kept.Kind)."
+        }
+    }
 }
 
 # Deletes a folder or a shortcut, to the Recycle Bin or ($Bin = DeletePermanently) for good.
@@ -1015,6 +1043,7 @@ function Remove-Path([string]$Path, [string]$Kind, $Ui, $Bin) {
             }
             if ((Get-Date) -ge $until) {
                 $what = if ($Kind -eq 'Shortcut') { 'shortcut' } else { 'folder' }
+                $script:KeptItems += [pscustomobject]@{ Path = $Path; Kind = $what; Holder = $holder }    # for the summary
                 throw "still in use ($holder). Close it and delete the $what."
             }
             # Try again only once it lets go (retrying against an open file would ask Windows over and over)
@@ -1288,6 +1317,8 @@ foreach ($r in $results) {
     }
     Write-Host "  $($r.Program.Name): $text"
 }
+# What was closed to get the job done, and what stayed because something is still using it
+Write-ClosedSummary
 if ($results.Status -contains 'Restart') { Write-Host "`nRestart the PC to finish." -ForegroundColor Yellow }
 else { Write-Host "`nDone." -ForegroundColor Green }
 
