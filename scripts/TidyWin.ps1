@@ -1214,6 +1214,8 @@ function Show-ChecklistCard($Q) {
         $content = New-Object Windows.Controls.StackPanel
         $content.Children.Add((New-Text "$($it.label)")) | Out-Null
         if ("$($it.note)") { $content.Children.Add((New-Text "$($it.note)" 12 'Normal' 'Fg2')) | Out-Null }
+        # A warning about the item (Remove apps: the whole folder that holds it goes too), in red when unsafe
+        if ("$($it.warn)") { $content.Children.Add((New-Text "$($it.warn)" 12 'Normal' $(if ($it.danger) { 'Err' } else { 'Warn' }))) | Out-Null }
         $check = New-Object Windows.Controls.CheckBox
         $check.Content = $content
         $check.IsChecked = [bool]$it.checked
@@ -1234,7 +1236,7 @@ function Show-ChecklistCard($Q) {
             $rowGrid.Children.Add($flag) | Out-Null
         }
         $list.Children.Add($rowGrid) | Out-Null
-        $row = @{ Index = $i; Check = $check; Flag = $flag; Row = $rowGrid; Group = $group; Text = "$($it.label) $($it.note)" }
+        $row = @{ Index = $i; Check = $check; Flag = $flag; Row = $rowGrid; Group = $group; Text = "$($it.label) $($it.note) $($it.warn)" }
         $S.Rows.Add($row)
         if ($group) { $S.Groups[$group].Rows.Add($row) }
     }

@@ -220,7 +220,7 @@ function Select-Items([string]$Title, [object[]]$Items, [switch]$Short) {
     if ($script:Panel) {
         # -Short: a short list (the leftovers to review), with no title or search in the panel; $Title goes to the log
         $answer = Request-Panel @{ type = 'checklist'; title = $(if ($Short) { '' } else { $Title }); question = $Title; search = -not $Short
-            items = @($Items | ForEach-Object { @{ label = "$($_.Label)"; note = "$($_.Note)"; group = "$($_.Group)"; checked = [bool]$_.Checked } }) }
+            items = @($Items | ForEach-Object { @{ label = "$($_.Label)"; note = "$($_.Note)"; warn = "$($_.Warn)"; danger = [bool]$_.Danger; group = "$($_.Group)"; checked = [bool]$_.Checked } }) }
         if ($null -eq $answer) { return @() }
         for ($i = 0; $i -lt $Items.Count; $i++) { $Items[$i].Checked = @($answer.checked) -contains $i }
         return @($Items | Where-Object Checked)
@@ -231,6 +231,7 @@ function Select-Items([string]$Title, [object[]]$Items, [switch]$Short) {
         for ($i = 0; $i -lt $Items.Count; $i++) {
             $mark = if ($Items[$i].Checked) { '[x]' } else { '[ ]' }
             Write-Host "    $($i + 1)) $mark $($Items[$i].Label)  $($Items[$i].Note)"
+            if ($Items[$i].Warn) { Write-Host "         ! $($Items[$i].Warn)" -ForegroundColor $(if ($Items[$i].Danger) { 'Red' } else { 'Yellow' }) }
         }
         $answer = "$(Read-Host '  Numbers separated by commas (Enter keeps the checked ones)')".Trim()
         if ($answer) {
@@ -283,8 +284,9 @@ function Select-Items([string]$Title, [object[]]$Items, [switch]$Short) {
                 $check  = if ($it.Checked) { '[x]' } else { '[ ]' }
                 $marker = if ($r -eq $row) { '>' } else { ' ' }
                 $label  = if ($it.Label.Length -gt $labelWidth) { $it.Label.Substring(0, $labelWidth - 1) + '…' } else { $it.Label.PadRight($labelWidth) }
-                $color  = if ($r -eq $row) { 'Cyan' } elseif ($it.Checked) { 'Green' } else { 'Gray' }
-                & $line "  $marker $check $label  $($it.Note)" $color
+                $color  = if ($it.Danger) { 'Red' } elseif ($it.Warn) { 'Yellow' } elseif ($r -eq $row) { 'Cyan' } elseif ($it.Checked) { 'Green' } else { 'Gray' }
+                $note   = if ($it.Warn) { "$($it.Note)   ! $($it.Warn)" } else { "$($it.Note)" }
+                & $line "  $marker $check $label  $note" $color
             }
 
             & $line '' 'Gray'
@@ -517,15 +519,17 @@ $RegistryRoots = @('HKCU:\SOFTWARE', 'HKLM:\SOFTWARE', 'HKLM:\SOFTWARE\WOW6432No
 # Under the user's profile a program keeps its own folders: settings, cache, data and the files you made
 # with it. These are what stays after a normal uninstall, which only removes the install folder.
 # Flavor: what a folder there usually holds, for the line that says what goes away with it.
+# RootCanGo: the folder itself may be deleted when the program's folder was the only thing in it (.config,
+# .cache). Never the profile, Documents, the shared folders or a drive root.
 $UserRoots = @(
-    @{ Path = $env:USERPROFILE;                           Flavor = 'Profile'   }
-    @{ Path = (Join-Path $env:USERPROFILE '.config');      Flavor = 'Settings'  }
-    @{ Path = (Join-Path $env:USERPROFILE '.cache');       Flavor = 'Cache'     }
-    @{ Path = (Join-Path $env:USERPROFILE '.local\share'); Flavor = 'Data'      }
-    @{ Path = (Join-Path $env:USERPROFILE '.local\state'); Flavor = 'Data'      }
-    @{ Path = [Environment]::GetFolderPath('MyDocuments'); Flavor = 'Documents' }
-    @{ Path = (Join-Path $env:USERPROFILE 'Saved Games');  Flavor = 'Documents' }
-    @{ Path = $env:PUBLIC;                                 Flavor = 'Shared'    }
+    @{ Path = $env:USERPROFILE;                           Flavor = 'Profile';   RootCanGo = $false }
+    @{ Path = (Join-Path $env:USERPROFILE '.config');      Flavor = 'Settings';  RootCanGo = $true  }
+    @{ Path = (Join-Path $env:USERPROFILE '.cache');       Flavor = 'Cache';     RootCanGo = $true  }
+    @{ Path = (Join-Path $env:USERPROFILE '.local\share'); Flavor = 'Data';      RootCanGo = $true  }
+    @{ Path = (Join-Path $env:USERPROFILE '.local\state'); Flavor = 'Data';      RootCanGo = $true  }
+    @{ Path = [Environment]::GetFolderPath('MyDocuments'); Flavor = 'Documents'; RootCanGo = $false }
+    @{ Path = (Join-Path $env:USERPROFILE 'Saved Games');  Flavor = 'Documents'; RootCanGo = $false }
+    @{ Path = $env:PUBLIC;                                 Flavor = 'Shared';    RootCanGo = $false }
 ) | Where-Object { $_.Path -and (Test-Path -LiteralPath $_.Path) }
 
 # Container folders where a program (or a game) may sit on another drive: D:\Games\<app>, C:\Apps\<app>...
@@ -616,6 +620,53 @@ function Test-ProtectedPath([string]$Path, [string[]]$KeepLocations) {
     return $false
 }
 
+# A container folder that may go once the program's folder inside it is deleted: .config, .cache,
+# .local\share, D:\Games, the publisher's folder. Never the profile, the shell folders, a drive root,
+# a Windows folder or a link.
+function Test-CanRemoveRoot([string]$Path) {
+    if (-not $Path) { return $false }
+    $full = $Path.TrimEnd('\')
+    if ($full -notmatch '^[A-Za-z]:\\.') { return $false }        # a drive root, or not a local path
+    $never = @($env:SystemRoot, $env:USERPROFILE, $env:PUBLIC, $env:APPDATA, $env:LOCALAPPDATA, $env:ProgramData,
+               $env:ProgramFiles, ${env:ProgramFiles(x86)}, (Split-Path $env:USERPROFILE -Parent),
+               (Join-Path $env:USERPROFILE 'AppData'), (Join-Path $env:USERPROFILE 'Downloads'),
+               (Join-Path $env:USERPROFILE 'Saved Games'),
+               [Environment]::GetFolderPath('MyDocuments'), [Environment]::GetFolderPath('Desktop'),
+               [Environment]::GetFolderPath('CommonDocuments'), [Environment]::GetFolderPath('CommonDesktopDirectory')) + $FolderRoots
+    foreach ($n in $never) { if ($n -and $full -ieq "$n".TrimEnd('\')) { return $false } }
+    if ($full -like "$env:SystemRoot\*" -or $full -like '*\WindowsApps*' -or $full -like '*\Common Files*') { return $false }
+    $item = Get-Item -LiteralPath $full -Force -ErrorAction SilentlyContinue
+    if (-not $item -or -not $item.PSIsContainer) { return $false }
+    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { return $false }
+    return $true
+}
+
+# A container left with nothing else in it after the program's folder was deleted goes too, so no empty
+# .config or D:\Games stays behind. Empty is checked again here, at the moment of deleting: the list may
+# have been read before, and the selection may keep some folders. desktop.ini does not count.
+function Remove-EmptyRoot([string]$Root, $Ui, [string]$Log) {
+    if (-not $Root -or -not (Test-CanRemoveRoot $Root)) { return }
+    # When the list of what is inside cannot be read, nothing is deleted: it may hold something.
+    try { $rest = @(Get-ChildItem -LiteralPath $Root -Force -ErrorAction Stop | Where-Object { $_.Name -ne 'desktop.ini' }) }
+    catch { return }
+    if ($rest) { return }
+    Write-Host "  WARNING: $Root holds nothing else now: deleting it too." -ForegroundColor Red
+    try {
+        if (Test-Recyclable $Root 0) {
+            [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($Root, $Ui, [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin)
+            $how = 'folder left empty; Recycle Bin'
+        } else {
+            [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($Root, $Ui, [Microsoft.VisualBasic.FileIO.RecycleOption]::DeletePermanently)
+            $how = 'folder left empty; deleted for good'
+        }
+        Write-Result 'OK' "$Root (nothing else was in it)"
+        Write-Host "       $how" -ForegroundColor DarkGray
+        Add-Content -LiteralPath $Log -Value "$(Get-Date -Format 'yyyy-MM-dd HH:mm')  Folder  $Root  ($how)" -Encoding UTF8
+    } catch {
+        Write-Result 'ERROR' "${Root}: $($_.Exception.Message.Trim())"
+    }
+}
+
 function Get-FolderSize([string]$Path) {
     return [int64](Get-ChildItem -LiteralPath $Path -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
 }
@@ -673,23 +724,26 @@ function Get-DriveRoots {
 
 # The program's folders inside one root, to offer: a folder named after the program, or the publisher's
 # folder holding one. Nothing is decided here: the caller turns each into a leftover, none of them checked.
-# Returns items with Path, Reason and Size.
-function Add-RootFolders([string]$Root, [string]$Flavor, [string[]]$Names, [string]$Publisher, [string[]]$KeepLocations) {
+# $RootCanGo: the root may be deleted when the program's folder was the only thing in it.
+# Returns items with Path, Reason, Size and Root (the container to check once the folder is deleted; '' = none).
+function Add-RootFolders([string]$Root, [string]$Flavor, [string[]]$Names, [string]$Publisher, [string[]]$KeepLocations, [bool]$RootCanGo) {
     $foundHere = New-Object System.Collections.Generic.List[object]
+    $container = if ($RootCanGo) { $Root } else { '' }
     foreach ($dir in (Get-ChildItem -LiteralPath $Root -Directory -Force -ErrorAction SilentlyContinue)) {
         if (Test-ProtectedPath $dir.FullName $KeepLocations) { continue }
         $key = Get-NameKey $dir.Name
         if ($Names -contains $key) {
             $hold = Get-FolderHoldings $dir.FullName
-            $foundHere.Add([pscustomobject]@{ Path = $dir.FullName; Reason = (Get-FlavorNote $Flavor $dir.FullName $hold); Size = $hold.Size })
+            $foundHere.Add([pscustomobject]@{ Path = $dir.FullName; Reason = (Get-FlavorNote $Flavor $dir.FullName $hold); Size = $hold.Size; Root = $container })
             continue
         }
-        # The publisher's folder holding the program's own: Documents\Rockstar Games\Launcher
+        # The publisher's folder holding the program's own: Documents\Rockstar Games\Launcher.
+        # The publisher's folder goes too when the program's was the only thing in it.
         if ($Publisher.Length -ge 3 -and $key -eq $Publisher) {
             foreach ($sub in (Get-ChildItem -LiteralPath $dir.FullName -Directory -Force -ErrorAction SilentlyContinue)) {
                 if ($Names -notcontains (Get-NameKey $sub.Name) -or (Test-ProtectedPath $sub.FullName $KeepLocations)) { continue }
                 $hold = Get-FolderHoldings $sub.FullName
-                $foundHere.Add([pscustomobject]@{ Path = $sub.FullName; Reason = (Get-FlavorNote $Flavor $sub.FullName $hold); Size = $hold.Size })
+                $foundHere.Add([pscustomobject]@{ Path = $sub.FullName; Reason = (Get-FlavorNote $Flavor $sub.FullName $hold); Size = $hold.Size; Root = $dir.FullName })
             }
         }
     }
@@ -699,11 +753,12 @@ function Add-RootFolders([string]$Root, [string]$Flavor, [string[]]$Names, [stri
 # What a removed program left behind. $KeepLocations: folders of programs still installed; $KeepNames:
 # their names. $Trusted = $false (uninstaller was missing): nothing comes checked, since the program may
 # not really be gone.
-# Each item: Kind (Folder/Registry/Shortcut/Task), Path, Reason, Checked (high confidence), Size, Recyclable.
+# Each item: Kind (Folder/Registry/Shortcut/Task), Path, Reason, Checked (high confidence), Size, Recyclable,
+# Root (the container folder that may be left empty by deleting it; '' = none).
 function Find-Leftovers($Program, [string[]]$KeepLocations, [string[]]$KeepNames, [bool]$Trusted) {
     $found = New-Object System.Collections.Generic.List[object]
     $add = {
-        param($Kind, $Path, $Reason, $Checked, $Size)
+        param($Kind, $Path, $Reason, $Checked, $Size, $Root)
         if ($found | Where-Object { $_.Path -ieq $Path }) { return }
         $sure = $Checked -and $Trusted
         $recyclable = $true
@@ -711,7 +766,7 @@ function Find-Leftovers($Program, [string[]]$KeepLocations, [string[]]$KeepNames
             $recyclable = $false; $Checked = $false
             $Reason += ' · too big for the Recycle Bin: would be deleted for good'
         }
-        $found.Add([pscustomobject]@{ Kind = $Kind; Path = $Path; Reason = $Reason; Checked = ($Checked -and $Trusted); Sure = $sure; Size = [int64]$Size; Recyclable = $recyclable })
+        $found.Add([pscustomobject]@{ Kind = $Kind; Path = $Path; Reason = $Reason; Checked = ($Checked -and $Trusted); Sure = $sure; Size = [int64]$Size; Recyclable = $recyclable; Root = "$Root" })
     }
 
     $names = @(Get-NameKey $Program.Name)
@@ -747,19 +802,19 @@ function Find-Leftovers($Program, [string[]]$KeepLocations, [string[]]$KeepNames
     #    on each fixed drive, plus the drive root itself (D:\Games\<app>, D:\<app>). Unchecked: likely
     #    theirs, not certain; each one says what it holds, so you can tell whether deleting it makes sense.
     $places = @(
-        foreach ($root in $FolderRoots) { @{ Path = $root; Flavor = 'Install' } }
-        foreach ($root in $UserRoots) { @{ Path = $root.Path; Flavor = $root.Flavor } }
+        foreach ($root in $FolderRoots) { @{ Path = $root; Flavor = 'Install'; RootCanGo = $false } }
+        foreach ($root in $UserRoots) { @{ Path = $root.Path; Flavor = $root.Flavor; RootCanGo = $root.RootCanGo } }
         foreach ($drive in (Get-DriveRoots)) {
-            @{ Path = $drive; Flavor = 'Install' }              # a portable copy left at the root: D:\<app>
+            @{ Path = $drive; Flavor = 'Install'; RootCanGo = $false }      # a portable copy left at the root: D:\<app>
             foreach ($container in $DriveContainers) {
                 $dir = Join-Path $drive $container
-                if (Test-Path -LiteralPath $dir) { @{ Path = $dir; Flavor = 'Install' } }
+                if (Test-Path -LiteralPath $dir) { @{ Path = $dir; Flavor = 'Install'; RootCanGo = $true } }
             }
         }
     )
     foreach ($place in $places) {
-        foreach ($f in (Add-RootFolders $place.Path $place.Flavor $names $publisher $KeepLocations)) {
-            & $add 'Folder' $f.Path $f.Reason $false $f.Size
+        foreach ($f in (Add-RootFolders $place.Path $place.Flavor $names $publisher $KeepLocations $place.RootCanGo)) {
+            & $add 'Folder' $f.Path $f.Reason $false $f.Size $f.Root
         }
     }
 
@@ -814,6 +869,28 @@ function Find-Leftovers($Program, [string[]]$KeepLocations, [string[]]$KeepNames
     return $found
 }
 
+# Roots that the chosen leftovers would leave empty. Named in red before anything is deleted, so the whole
+# folder going is said out loud, not only in the list. The deletion checks the emptiness again.
+function Get-RootsToRemove([object[]]$Items) {
+    $doing = @($Items | Where-Object { $_.Kind -eq 'Folder' })
+    $roots = @()
+    foreach ($it in $doing) {
+        if (-not $it.Root -or $roots -contains $it.Root -or -not (Test-CanRemoveRoot $it.Root)) { continue }
+        $others = @(Get-ChildItem -LiteralPath $it.Root -Force -ErrorAction SilentlyContinue | Where-Object {
+            $child = $_
+            $child.Name -ne 'desktop.ini' -and -not ($doing | Where-Object { $_.Path -ieq $child.FullName })
+        })
+        if (-not $others) { $roots += $it.Root }
+    }
+    return $roots
+}
+
+function Write-RootWarnings([object[]]$Items) {
+    foreach ($root in (Get-RootsToRemove $Items)) {
+        Write-Host "  WARNING: $root holds nothing else and will be deleted too." -ForegroundColor Red
+    }
+}
+
 # Deletes what was confirmed: folders and shortcuts to the Recycle Bin; registry keys and tasks exported first.
 # Everything done is listed in deleted.txt in the backup folder (Recycle Bin items included).
 # Items that don't fit in the Recycle Bin are only deleted for good after their own confirmation.
@@ -859,6 +936,8 @@ function Remove-Leftovers([object[]]$Items, [string]$BackupDir) {
             }
             Write-Result 'OK' "$($it.Path)"; Write-Host "       $how" -ForegroundColor DarkGray
             Add-Content -LiteralPath $log -Value "$(Get-Date -Format 'yyyy-MM-dd HH:mm')  $($it.Kind)  $($it.Path)  ($how)" -Encoding UTF8
+            # The container (.config, .cache, D:\Games, the publisher's folder) goes too when nothing else is in it
+            if ($it.Kind -eq 'Folder' -and $it.Root) { Remove-EmptyRoot $it.Root $ui $log }
         } catch {
             Write-Result 'ERROR' "$($it.Path): $($_.Exception.Message.Trim())"
         }
@@ -893,7 +972,7 @@ if ($Describe) {
         } else {
             New-Field $T 'Nothing' 'header' 'No programs found' 'Nothing on this PC can be uninstalled from here.' $null
         }
-        New-Field $T 'Leftovers' 'toggle' 'Remove leftovers' 'What is certainly theirs goes right away: the install folder that remained, broken shortcuts, empty Start menu folders and their scheduled tasks. What only might be theirs is listed at the end for you to pick, nothing checked: folders with their name in Program Files and AppData, in your own folder (settings in .config, cache in .cache, your files in Documents and Saved Games) and on other drives (D:\Games\<app>). Each one says what it holds, so you can tell whether deleting it makes sense. Folders go to the Recycle Bin; registry keys and tasks are backed up first.' $false @{ footer = $true }
+        New-Field $T 'Leftovers' 'toggle' 'Remove leftovers' 'What is certainly theirs goes right away: the install folder that remained, broken shortcuts, empty Start menu folders and their scheduled tasks. What only might be theirs is listed at the end for you to pick, nothing checked: folders with their name in Program Files and AppData, in your own folder (settings in .config, cache in .cache, your files in Documents and Saved Games) and on other drives (D:\Games\<app>). Each one says what it holds, so you can tell whether deleting it makes sense. Folders go to the Recycle Bin; registry keys and tasks are backed up first. A folder that held nothing else (.config, D:\Games) goes too.' $false @{ footer = $true }
     )
     Write-OptionsPage $Describe $fields @('Each program opens its own uninstaller: follow its window. Close the programs before you start.')
     return
@@ -963,7 +1042,7 @@ if ($removed -and $lookForLeftovers) {
         $found = @(Find-Leftovers $r.Program $keepLocs $keepNames ($r.Status -ne 'Orphan'))
         # An entry whose uninstaller is gone stays in Settings' list: offer its uninstall key (checked)
         if ($r.Status -eq 'Orphan' -and (Test-Path -LiteralPath $r.Program.Key)) {
-            $found += [pscustomobject]@{ Kind = 'Registry'; Path = (Get-Item -LiteralPath $r.Program.Key).Name; Reason = 'entry left in the installed apps list'; Checked = $true; Sure = $true; Size = 0; Recyclable = $true }
+            $found += [pscustomobject]@{ Kind = 'Registry'; Path = (Get-Item -LiteralPath $r.Program.Key).Name; Reason = 'entry left in the installed apps list'; Checked = $true; Sure = $true; Size = 0; Recyclable = $true; Root = '' }
         }
         foreach ($f in $found) {
             $leftItems += [pscustomobject]@{ Group = $r.Program.Name; Label = $f.Path; Checked = $f.Checked; Size = $f.Size; Leftover = $f
@@ -974,6 +1053,20 @@ if ($removed -and $lookForLeftovers) {
     if (-not $leftItems) {
         Write-Result 'OK' 'Nothing left behind'
     } else {
+        # A folder whose container would be left empty gets a red line: the whole container goes too.
+        # Only when it is the only thing there: another folder, listed or not, keeps the container.
+        # The list may change afterwards, so the deletion checks the emptiness again.
+        foreach ($folder in @($leftItems | Where-Object { $_.Leftover.Kind -eq 'Folder' -and $_.Leftover.Root })) {
+            $root = $folder.Leftover.Root
+            if (-not (Test-CanRemoveRoot $root)) { continue }
+            $others = @(Get-ChildItem -LiteralPath $root -Force -ErrorAction SilentlyContinue | Where-Object {
+                $_.Name -ne 'desktop.ini' -and $_.FullName -ine $folder.Leftover.Path
+            })
+            if ($others) { continue }
+            $msg = "The whole folder $root will be deleted too: nothing else is in it."
+            $folder | Add-Member -NotePropertyName Warn -NotePropertyValue $msg -Force
+            $folder | Add-Member -NotePropertyName Danger -NotePropertyValue $true -Force
+        }
         $backup = Join-Path $env:ProgramData ("TidyWin\uninstall-backup\{0}" -f (Get-Date -Format 'yyyy-MM-dd HHmm'))
         if ($Answers) {
             # What is certainly theirs (and fits in the Recycle Bin) goes right away. The rest only might be
@@ -994,6 +1087,7 @@ if ($removed -and $lookForLeftovers) {
             }
             if ($toDelete) {
                 Write-Step 'Deleting leftovers'
+                Write-RootWarnings @($toDelete | ForEach-Object { $_.Leftover })
                 Remove-Leftovers @($toDelete | ForEach-Object { $_.Leftover }) $backup
                 Write-Host "  List of what was deleted, and the backups: $backup" -ForegroundColor DarkGray
                 Write-Host '  To put a registry key back, double-click its .reg file. Folders: restore them from the Recycle Bin.' -ForegroundColor DarkGray
@@ -1011,6 +1105,7 @@ if ($removed -and $lookForLeftovers) {
                 if ($toDelete | Where-Object { -not $_.Leftover.Recyclable }) {
                     Write-Host '  Items that don''t fit in the Recycle Bin will each ask again before being deleted for good.' -ForegroundColor Yellow
                 }
+                Write-RootWarnings @($toDelete | ForEach-Object { $_.Leftover })
                 if (Ask 'Delete them?' $false) {
                     Write-Step 'Deleting leftovers'
                     Remove-Leftovers @($toDelete | ForEach-Object { $_.Leftover }) $backup

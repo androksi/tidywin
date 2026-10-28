@@ -37,7 +37,7 @@ README.md                    centered header, disclaimer, "What's inside" table,
 assets/banner.png            panel screenshot used by the README (2347×1581, dark theme)
 assets/logo.svg              the logo (also drawn in code by New-Logo in TidyWin.ps1)
 docs/*.md                    one page per area: windows, apps, fonts, browsers, backup, drivers, reinstall
-scripts/TidyWin.ps1          the panel (≈2500 lines)
+scripts/TidyWin.ps1          the panel (≈2,300 lines; XAML lives inside it)
 scripts/<area>/<verb>-<noun>.ps1   one script per page (lowercase names)
 web/launcher.ps1             the "run" shortcut (ASCII, no BOM)
 web/build.sh, web/index.html GitHub Pages site
@@ -57,7 +57,7 @@ The menu is `Get-Menu` in `scripts/TidyWin.ps1` (section 1). Every entry is `New
 | Set up | Apps (`apps`) | `apps/configure-apps.ps1` | 106 apps in category tabs, WinGet/Store/Windows feature; **Search** tab (`-Search`) |
 | Set up | Fonts (`fonts`) | `fonts/install-fonts.ps1` | 19 fonts; `-Revert` undoes |
 | Set up | Browsers (`browsers`) | `browsers/configure-chrome.ps1`, `configure-brave.ps1`, `configure-firefox.ps1` | One page, a switch per browser; each script describes its own part |
-| Maintenance | Remove apps (`uninstall`) | `apps/uninstall-apps.ps1` | Official uninstallers + leftovers |
+| Maintenance | Remove apps (`uninstall`) | `apps/uninstall-apps.ps1` | Official uninstallers + leftovers (install folder, user profile, registry keys, shortcuts; folders go to the Recycle Bin; a container left empty, like `.config` or `D:\Games`, goes too) |
 | Maintenance | Disk space (`cleanup`) | `windows/clean-windows.ps1` | Measures each item while the page loads |
 | Maintenance | Fix Windows (`repair`) | `windows/repair-windows.ps1` | DISM, sfc, disk check |
 | Maintenance | Internet connection (`network-reset`) | `windows/reset-network.ps1` | Quick / Full; keeps the DNS |
@@ -106,7 +106,8 @@ Every script also runs on its own in a console (arrow-key menus), without the pa
 | `guide` | explanation card: `items = @(@{ label; text; brush })`, optional `tip` (Firewall → Networks) | — |
 
 Common properties: `desc` (grey), `warn` (yellow; red with `danger = $true`), `badge` (+ `badgeBrush`: `Accent`, `Ok`, `Warn`, `Err`, `Fg2`), `when` (one `@{ field; is }` or a list, all needed; compare as strings: `$true` → `'True'`), `indent`, `setting` (doesn't count as a change), `footer` (the one extra checkbox next to the buttons), `quiet` (Browsers: the per-browser switch).
-Checklist item extras: `status` shows "• text" next to the name (green, or `statusBrush`); `statusTip` adds an ⓘ icon with a tooltip (first line bold); `flag`/`flagLabel`/`flagHint` add a second box per item (Apps: Interactive).
+The panel accepts a `when` list. The base console `Read-Options` only understands a single condition, and list support exists only in the `backup-*` copies. (`configure-windows.ps1` uses a list for the DNS adapter rows, so do not copy its console handling as the reference.)
+Checklist item extras: `status` shows "• text" next to the name (green, or `statusBrush`); `statusTip` adds an ⓘ icon with a tooltip (first line bold); `flag`/`flagLabel`/`flagHint` add a second box per item (Apps: Interactive). A flagged checklist also sends `<id>.flags` (the checked flag values) next to `<id>`.
 Browser scripts: toggles become one checklist (`Get-BrowserFields`); a toggle's `section` becomes its item group (e.g. "Extensions and passwords", "Right-click menu", "Main menu"). Sectioned items must come last and be contiguous.
 
 ### Questions while a script runs (stdout → panel → stdin)
@@ -122,7 +123,7 @@ Copy an existing script of the same shape (`windows/reset-network.ps1`, `windows
 
 1. `#Requires -RunAsAdministrator`, then a header comment: one line saying what it does, **HOW TO RUN**, what each option does in plain words, where state is saved, **FILE LAYOUT**.
 2. `param([string]$Describe, [string]$Answers)` (+ `-Revert`, `-Export`/`-Import`, `-Search`/`-SearchOut` where needed).
-3. `#region PANEL` — **identical in every script** (copy it verbatim): `Write-PanelHost`, `Request-Panel`, `Write-Loading`, the `Write-Host`/`Read-Host` overrides, `Opt`, `New-Field`, `Write-OptionsPage`, `Read-Options`, `Ask`. If you change it, change it everywhere. (`configure-windows.ps1` has its own richer `Read-Options`; `manage-firewall.ps1` adds a `guide` case.)
+3. `#region PANEL` — copied between scripts but **not byte-identical**. Twelve scripts share the base copy (`reset-network.ps1` is a good reference): `Write-PanelHost`, `Request-Panel`, `Write-Loading`, the `Write-Host`/`Read-Host` overrides, `Opt`, `New-Field`, `Write-OptionsPage`, `Read-Options`, `Ask`. The three `backup-*` scripts add `when` lists and start a select on its default instead of always offering "Skip"; `manage-firewall.ps1` adds the console `guide` case. Change the shared parts in every script and keep those extras.
 4. `#region 1. HELPERS` — `Write-Step`, `Choose` (arrow-key menu, numbered fallback), `Ask`, `Write-Result` (`[OK]`, `[WARNING]`, `[ERROR]`), then the page's own helpers. End with the PowerShell 7 guard (`if ($PSVersionTable.PSEdition -ne 'Desktop') { ...; return }`).
 5. `#region 2. ...` — the changes, one function per action.
 6. `#region 3. EXECUTION` — `Write-Loading` → read the PC → build `$fields` → `if ($Describe) { Write-OptionsPage $Describe $fields $notes; return }` → `$v = Read-Options $fields $Answers` → "Nothing was selected, so nothing was changed." when empty → backup/restore point when the change is risky → apply with `Write-Step`/`Write-Result` → "Done." and how to undo.
@@ -178,7 +179,7 @@ There are no unit tests. Test by running the real code against the real PC **rea
 | `%ProgramData%\TidyWin\doh-servers.json` | Windows → Network (DoH address) | DoH servers TidyWin added to Windows' table (null) |
 | `%ProgramData%\TidyWin\firewall\*.wfw` | Firewall | `netsh advfirewall export` before every change, last 5 kept |
 | `%ProgramData%\TidyWin\network-reset\` | Internet connection → Full | DNS and DoH backup |
-| `%ProgramData%\TidyWin\uninstall-backup\<date>\` | Remove apps | Exported registry keys and tasks + `deleted.txt` |
+| `%ProgramData%\TidyWin\uninstall-backup\<date>\` | Remove apps | Exported registry keys and tasks + `deleted.txt`; folders and shortcuts go to the Recycle Bin when they fit |
 | `%ProgramData%\TidyWin\fonts.json` | Fonts | Fonts installed by TidyWin (for `-Revert`) |
 | `%ProgramData%\TidyWin\start-unpinned.json` | Windows → Start ad shortcuts | What was unpinned |
 | Desktop `TidyWin log <date>.txt` | Windows | Log of everything applied (no user or PC name) |
@@ -201,11 +202,12 @@ Restore points: Windows, Remove apps, Fix Windows (`Checkpoint-Computer`; Window
 
 ## 9. Encoding, style and CI
 
-- `.ps1`: **UTF-8 with BOM** (Windows PowerShell 5.1 misreads accents and symbols like `·`, `→`, `…` without it), CRLF in checkouts, 4 spaces. The lint workflow fails on a missing BOM.
+- `.ps1`: **UTF-8 with BOM** (Windows PowerShell 5.1 misreads accents and symbols like `·`, `→`, `…` without it), CRLF in checkouts, 4 spaces. The lint workflow fails on a missing BOM. Editor tools often save without one; add it before finishing:
+  `[IO.File]::WriteAllText($path, [IO.File]::ReadAllText($path), (New-Object Text.UTF8Encoding $true))`
 - `web/launcher.ps1`: **ASCII only, no BOM** (a BOM breaks `irm | iex`).
 - `.md`, `.yml`, `.html`, `.svg`, `.sh`: UTF-8 without BOM, LF, 2 spaces (4 for `.sh`).
 - Git normalizes to LF in the repository (`.gitattributes`); the "LF will be replaced by CRLF" warnings are expected.
-- CI (`lint.yml`): BOM check + `Invoke-ScriptAnalyzer -Severity Error` on `scripts/`.
+- CI (`lint.yml`): BOM check + `Invoke-ScriptAnalyzer -Severity Error` on `scripts/`. It runs on `pwsh` and never executes a page, so a green lint says nothing about behavior.
 - Code style: comment the *why* in plain English above functions and non-obvious lines, like the existing code; regions with `#region ==================== N. NAME ====================`; aligned tables in long `@(...)` lists; names like `Set-…`, `Get-…`, `Test-…`, `Remove-…`; no aliases in scripts.
 - PowerShell 5.1 only: no `??`, `?:`, `?.`, `&&`/`||` pipeline chains, `ForEach-Object -Parallel`, `-AsHashtable`, `Join-String`.
 
