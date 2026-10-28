@@ -28,7 +28,8 @@
     4. Deletes only what you confirm: folders and shortcuts go to the Recycle Bin (what doesn't fit asks
        again, one by one, before being deleted for good); registry keys and scheduled tasks are exported
        first to %ProgramData%\TidyWin\uninstall-backup\<date>, with a deleted.txt listing everything
-       (double-click a .reg file to put a key back).
+       (double-click a .reg file to put a key back). A folder that a program still has open is named, and
+       gets half a minute to close before it is kept.
 
     FILE LAYOUT
         1. Helpers ................... prompts, checklist with search
@@ -653,10 +654,10 @@ function Remove-EmptyRoot([string]$Root, $Ui, [string]$Log) {
     Write-Host "  WARNING: $Root holds nothing else now: deleting it too." -ForegroundColor Red
     try {
         if (Test-Recyclable $Root 0) {
-            [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($Root, $Ui, [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin)
+            Remove-Path $Root 'Folder' $Ui ([Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin)
             $how = 'folder left empty; Recycle Bin'
         } else {
-            [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($Root, $Ui, [Microsoft.VisualBasic.FileIO.RecycleOption]::DeletePermanently)
+            Remove-Path $Root 'Folder' $Ui ([Microsoft.VisualBasic.FileIO.RecycleOption]::DeletePermanently)
             $how = 'folder left empty; deleted for good'
         }
         Write-Result 'OK' "$Root (nothing else was in it)"
@@ -891,6 +892,71 @@ function Write-RootWarnings([object[]]$Items) {
     }
 }
 
+# True when another program keeps a file open. Opening it without sharing is the test: Windows answers that with
+# "sharing violation" only for a file somebody else has open.
+function Test-FileLocked([string]$File) {
+    try {
+        $stream = [IO.File]::Open($File, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None)
+        $stream.Dispose()
+        return $false
+    } catch { return $true }
+}
+
+# Programs running from inside a folder: the tray icon an uninstaller leaves behind, or a helper it started.
+function Get-FolderProcesses([string]$Path) {
+    $full = $Path.TrimEnd('\')
+    $names = @(foreach ($proc in (Get-Process -ErrorAction SilentlyContinue)) {
+        $exe = ''
+        try { $exe = "$($proc.Path)" } catch { }        # a process of another user has no readable path
+        if ($exe -and $exe -like "$full\*") { $proc.ProcessName }
+    })
+    return @($names | Select-Object -Unique)
+}
+
+# The first file inside a folder that another program has open ('' when every one can be read). That file is what
+# stops the folder from being deleted: a database or a log a program that is still running holds.
+function Get-LockedFile([string]$Path) {
+    foreach ($file in (Get-ChildItem -LiteralPath $Path -Recurse -File -Force -ErrorAction SilentlyContinue)) {
+        if (Test-FileLocked $file.FullName) { return $file.FullName }
+    }
+    return ''
+}
+
+# Deletes a folder or a shortcut, to the Recycle Bin or ($Bin = DeletePermanently) for good.
+# Windows refuses the whole folder while one file inside is open, and says only "The system call level is
+# incorrect", which nobody can act on. So the program holding it is named and gets half a minute to close, since
+# an uninstaller often leaves a tray icon running. Then the deletion is tried once more.
+function Remove-Path([string]$Path, [string]$Kind, $Ui, $Bin) {
+    $until = (Get-Date).AddSeconds(30)
+    $told = $false
+    while ($true) {
+        try {
+            if ($Kind -eq 'Folder') { [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($Path, $Ui, $Bin) }
+            else                    { [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($Path, $Ui, $Bin) }
+            return
+        } catch {
+            # What is holding it: a program running from inside, or one that has a file inside open
+            $busy = @(Get-FolderProcesses $Path)
+            $locked = if ($busy) { '' } else { Get-LockedFile $Path }
+            $holder = if ($busy) { $busy -join ', ' } elseif ($locked) { Split-Path $locked -Leaf } else { '' }
+            if (-not $holder) { throw $_.Exception.Message }     # not a file in use: the error already says what it is
+            if (-not $told) {
+                Write-Host "  Still in use ($holder): waiting up to half a minute for it to close..." -ForegroundColor Yellow
+                $told = $true
+            }
+            if ((Get-Date) -ge $until) {
+                $what = if ($Kind -eq 'Shortcut') { 'shortcut' } else { 'folder' }
+                throw "still in use ($holder). Close it and delete the $what."
+            }
+            # Try again only once it lets go (retrying against an open file would ask Windows over and over)
+            while ((Get-Date) -lt $until) {
+                Start-Sleep -Seconds 2
+                if (-not ($busy -and @(Get-FolderProcesses $Path)) -and -not ($locked -and (Test-FileLocked $locked))) { break }
+            }
+        }
+    }
+}
+
 # Deletes what was confirmed: folders and shortcuts to the Recycle Bin; registry keys and tasks exported first.
 # Everything done is listed in deleted.txt in the backup folder (Recycle Bin items included).
 # Items that don't fit in the Recycle Bin are only deleted for good after their own confirmation.
@@ -917,8 +983,8 @@ function Remove-Leftovers([object[]]$Items, [string]$BackupDir) {
         }
         try {
             switch ($it.Kind) {
-                'Folder'   { [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($it.Path, $ui, $bin) }
-                'Shortcut' { [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($it.Path, $ui, $bin) }
+                'Folder'   { Remove-Path $it.Path 'Folder' $ui $bin }
+                'Shortcut' { Remove-Path $it.Path 'Shortcut' $ui $bin }
                 'Registry' {
                     $reg = Join-Path $BackupDir ('{0:D2} {1}.reg' -f $n, ((Split-Path $it.Path -Leaf) -replace '[\\/:*?"<>|]', '_'))
                     & reg.exe export $it.Path $reg /y *> $null
