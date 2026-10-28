@@ -8,7 +8,9 @@
     1. Lists the installed programs (the same list as Settings → Apps → Installed apps, without system
        components and updates). Check the ones to remove.
     2. Creates a restore point, then runs each program's official uninstaller, one at a time, with its
-       own window: you see it and answer it. Nothing is forced.
+       own window: you see it and answer it. A program that is still open blocks its own uninstaller:
+       turn on "Close the programs before uninstalling" and TidyWin closes it first (the window is
+       asked to close, so it can save; what does not close by itself is ended).
     3. After you close the uninstaller windows, looks for what the removed programs left behind and
        shows everything before deleting:
          checked ..... the install folder that remained (under 1 GB, not named after the publisher),
@@ -28,8 +30,9 @@
     4. Deletes only what you confirm: folders and shortcuts go to the Recycle Bin (what doesn't fit asks
        again, one by one, before being deleted for good); registry keys and scheduled tasks are exported
        first to %ProgramData%\TidyWin\uninstall-backup\<date>, with a deleted.txt listing everything
-       (double-click a .reg file to put a key back). A folder that a program still has open is named, and
-       gets half a minute to close before it is kept.
+       (double-click a .reg file to put a key back). What still holds a folder (a tray icon the uninstaller
+       left) is closed first when the option is on; otherwise it is named, gets half a minute, and is kept.
+       Only processes running from the program's own folders are ever ended, never by name.
 
     FILE LAYOUT
         1. Helpers ................... prompts, checklist with search
@@ -902,15 +905,67 @@ function Test-FileLocked([string]$File) {
     } catch { return $true }
 }
 
-# Programs running from inside a folder: the tray icon an uninstaller leaves behind, or a helper it started.
-function Get-FolderProcesses([string]$Path) {
-    $full = $Path.TrimEnd('\')
-    $names = @(foreach ($proc in (Get-Process -ErrorAction SilentlyContinue)) {
+# Every running program with the folder its .exe is in, read once for a whole page (a page asks about more than a
+# hundred programs). A process of another user has no readable path and is left out.
+function Get-RunningProcesses {
+    return @(foreach ($proc in (Get-Process -ErrorAction SilentlyContinue)) {
         $exe = ''
-        try { $exe = "$($proc.Path)" } catch { }        # a process of another user has no readable path
-        if ($exe -and $exe -like "$full\*") { $proc.ProcessName }
+        try { $exe = "$($proc.Path)" } catch { }
+        if ($exe) { [pscustomobject]@{ Name = $proc.ProcessName; Path = $exe; Process = $proc } }
     })
-    return @($names | Select-Object -Unique)
+}
+
+# The running processes whose .exe is inside one of the folders: that program is open.
+# $Running: the list read once by Get-RunningProcesses. Without it the processes are read now, which is what a
+# recheck wants (a program closed a moment ago must not count any more).
+function Get-FolderProcesses([string[]]$Folders, [object[]]$Running) {
+    $wanted = @($Folders | Where-Object { $_ } | ForEach-Object { "$_".TrimEnd('\') })
+    if (-not $wanted) { return @() }
+    if (-not $Running) { $Running = @(Get-RunningProcesses) }
+    return @($Running | Where-Object { $entry = $_; @($wanted | Where-Object { $entry.Path -like "$_\*" }).Count -gt 0 } |
+             ForEach-Object { $_.Process })
+}
+
+# True once a process is gone (a process read a moment ago may be stale).
+function Test-ProcessExited($Process) {
+    try { return [bool]$Process.HasExited } catch { return $true }
+}
+
+# Closes the processes that keep a program's files open, so its uninstaller (and the cleanup) can work.
+# Their windows are asked to close first, like clicking the X, so the program can save; what is still running
+# after a few seconds is ended. Only processes running from the program's own folders are ever passed here:
+# names like node.exe or python.exe belong to many programs, so a name is never enough to end anything.
+function Close-OpenPrograms([object[]]$Processes) {
+    $list = @($Processes | Where-Object { $_ })
+    if (-not $list) { return }
+    # The windows are asked to close, so the program can save. A process with no window (a service, an icon in
+    # the tray) has nothing to ask: it is ended straight away, with no wait that would only delay the page.
+    $asked = @()
+    foreach ($proc in $list) {
+        try {
+            if ($proc.MainWindowHandle -ne 0) { [void]$proc.CloseMainWindow(); $asked += $proc }
+        } catch { }
+    }
+    if ($asked) {
+        $until = (Get-Date).AddSeconds(6)
+        while ((Get-Date) -lt $until -and @($asked | Where-Object { -not (Test-ProcessExited $_) }).Count) {
+            Start-Sleep -Milliseconds 500
+        }
+    }
+    # One line per program, not per process: an app that puts a window in the tray runs as five processes
+    $state = @{}
+    foreach ($proc in $list) {
+        $name = $proc.ProcessName
+        if (-not $state.ContainsKey($name)) { $state[$name] = 'closed' }
+        if (Test-ProcessExited $proc) { continue }
+        try { Stop-Process -Id $proc.Id -Force -ErrorAction Stop; $state[$name] = 'ended' }
+        catch { $state[$name] = "$($_.Exception.Message.Trim())" }
+    }
+    foreach ($name in @($state.Keys | Sort-Object)) {
+        if     ($state[$name] -eq 'closed') { Write-Result 'OK' "Closed $name" }
+        elseif ($state[$name] -eq 'ended')  { Write-Result 'OK' "Ended $name (it did not close by itself)" }
+        else                                { Write-Result 'ERROR' "$($name): $($state[$name])" }
+    }
 }
 
 # The first file inside a folder that another program has open ('' when every one can be read). That file is what
@@ -920,6 +975,19 @@ function Get-LockedFile([string]$Path) {
         if (Test-FileLocked $file.FullName) { return $file.FullName }
     }
     return ''
+}
+
+# Closes what holds the folders about to be deleted, so a deletion doesn't fail on an open file. Only processes
+# running from one of those folders, plus the removed programs' own folders (a program that keeps its database in
+# your profile still runs from its install folder). Never by name: see Close-OpenPrograms.
+function Close-LeftoverHolders([object[]]$Items, [object[]]$Programs) {
+    $folders = @($Items | Where-Object { $_.Kind -eq 'Folder' } | ForEach-Object { $_.Path })
+    if (-not $folders) { return }
+    $folders += @($Programs | ForEach-Object { Get-ProgramFolders $_ })
+    $open = @(Get-FolderProcesses $folders)
+    if (-not $open) { return }
+    Write-Step 'Closing what still holds the leftovers'
+    Close-OpenPrograms $open
 }
 
 # Deletes a folder or a shortcut, to the Recycle Bin or ($Bin = DeletePermanently) for good.
@@ -938,7 +1006,8 @@ function Remove-Path([string]$Path, [string]$Kind, $Ui, $Bin) {
             # What is holding it: a program running from inside, or one that has a file inside open
             $busy = @(Get-FolderProcesses $Path)
             $locked = if ($busy) { '' } else { Get-LockedFile $Path }
-            $holder = if ($busy) { $busy -join ', ' } elseif ($locked) { Split-Path $locked -Leaf } else { '' }
+            $holder = if ($busy) { (@($busy | ForEach-Object { $_.ProcessName } | Select-Object -Unique) -join ', ') }
+                      elseif ($locked) { Split-Path $locked -Leaf } else { '' }
             if (-not $holder) { throw $_.Exception.Message }     # not a file in use: the error already says what it is
             if (-not $told) {
                 Write-Host "  Still in use ($holder): waiting up to half a minute for it to close..." -ForegroundColor Yellow
@@ -1023,24 +1092,30 @@ if (-not $Describe) {
 
 Write-Loading 'Reading the installed programs' 10
 $programs = @(Get-InstalledPrograms)
+Write-Loading 'Looking at the programs that are open' 70
+$allRunning = @(Get-RunningProcesses)
 $items = @($programs | ForEach-Object {
     $note = (@($_.Publisher, $_.Version, (Format-Size $_.Size), $_.Date) | Where-Object { $_ }) -join ' · '
-    [pscustomobject]@{ Group = ''; Label = $_.Name; Note = $note; Checked = $false; Size = $_.Size; Program = $_ }
+    $open = [bool](Get-FolderProcesses (Get-ProgramFolders $_) $allRunning)
+    [pscustomobject]@{ Group = ''; Label = $_.Name; Note = $note; Checked = $false; Size = $_.Size; Program = $_; Open = $open }
 })
 
 # --- The panel's page: the programs (with search), then what to do with what they leave behind. Nothing on.
 if ($Describe) {
     $T = 'Programs'
     $fields = @(
+        New-Field $T 'Close' 'toggle' 'Close the programs before uninstalling' 'A program that is still open blocks its own uninstaller, and leaves its files open after it. This closes the ones that are open, and later whatever is holding their leftover files. Their window is asked to close first, so they can save; what does not close by itself is ended, losing what was not saved. Only programs running from the program''s own folders: never one just because it has the same name.' $false @{ setting = $true }
         if ($items) {
             New-Field $T 'programs' 'checklist' '' '' @() @{ search = $true
-                items = @($items | ForEach-Object { [ordered]@{ value = $_.Program.Key; label = $_.Label; note = $_.Note; group = ''; status = '' } }) }
+                items = @($items | ForEach-Object { [ordered]@{ value = $_.Program.Key; label = $_.Label; note = $_.Note; group = ''
+                    status = $(if ($_.Open) { 'Open now' } else { '' }); statusBrush = 'Warn'
+                    statusTip = $(if ($_.Open) { "It is running now.`nTurn on ""Close the programs before uninstalling"" and TidyWin closes it before its uninstaller opens." } else { '' }) } }) }
         } else {
             New-Field $T 'Nothing' 'header' 'No programs found' 'Nothing on this PC can be uninstalled from here.' $null
         }
         New-Field $T 'Leftovers' 'toggle' 'Remove leftovers' 'What is certainly theirs goes right away: the install folder that remained, broken shortcuts, empty Start menu folders and their scheduled tasks. What only might be theirs is listed at the end for you to pick, nothing checked: folders with their name in Program Files and AppData, in your own folder (settings in .config, cache in .cache, your files in Documents and Saved Games) and on other drives (D:\Games\<app>). Each one says what it holds, so you can tell whether deleting it makes sense. Folders go to the Recycle Bin; registry keys and tasks are backed up first. A folder that held nothing else (.config, D:\Games) goes too.' $false @{ footer = $true }
     )
-    Write-OptionsPage $Describe $fields @('Each program opens its own uninstaller: follow its window. Close the programs before you start.')
+    Write-OptionsPage $Describe $fields @('Each program opens its own uninstaller: follow its window.')
     return
 }
 if (-not $programs) { Write-Host 'No programs found.'; return }
@@ -1059,18 +1134,31 @@ Write-Host "`n  $($chosen.Count) program(s) to uninstall:"
 $chosen | ForEach-Object { Write-Host "    - $($_.Label)" }
 Write-Host '  Each one opens its own uninstaller: follow its window.' -ForegroundColor DarkGray
 
-# Programs still open block their uninstaller (or leave files behind): name them so they can be closed
+# Programs still open block their uninstaller (or leave files behind): name them, and close them when asked
 $chosenFolders = @($chosen | ForEach-Object { Get-ProgramFolders $_.Program })
-$running = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $proc = $_; $proc.Path -and ($chosenFolders | Where-Object { $proc.Path -like "$_\*" }) } |
-             Select-Object -ExpandProperty ProcessName -Unique)
-if ($running) {
-    Write-Host "  Still open: $($running -join ', '). Close them before going on." -ForegroundColor Yellow
+$openNames = @(Get-FolderProcesses $chosenFolders | ForEach-Object { $_.ProcessName } | Select-Object -Unique)
+if ($openNames) { Write-Host "  Still open: $($openNames -join ', ')." -ForegroundColor Yellow }
+$closeOpen = if ($Answers) { [bool]$script:Answer.Close } else { $false }
+if (-not $Answers -and $openNames) {
+    $closeOpen = Ask 'Close them for you? (one that does not close is ended, losing unsaved work)' $false
 }
+if ($openNames -and -not $closeOpen) { Write-Host '  Close them yourself before going on.' -ForegroundColor DarkGray }
 if (-not $Answers -and -not (Ask 'Uninstall now?' $true)) { Write-Host 'Nothing was uninstalled.'; return }
 
 # --- Uninstall
 Write-Step 'Restore point'
 if (-not (New-RestorePoint)) { Write-Host 'Nothing was uninstalled.'; return }
+
+# --- Close what is still open, when it was chosen: the uninstaller works better without files in use, and fewer
+#     files stay locked for the cleanup at the end
+if ($closeOpen) {
+    $openProcs = @(Get-FolderProcesses $chosenFolders)
+    if ($openProcs) {
+        Write-Step 'Closing the programs still open'
+        Close-OpenPrograms $openProcs
+        Start-Sleep -Milliseconds 500      # Windows takes a moment to let go of the folders
+    }
+}
 
 $results = @()
 for ($i = 0; $i -lt $chosen.Count; $i++) {
@@ -1152,6 +1240,9 @@ if ($removed -and $lookForLeftovers) {
                 }
             }
             if ($toDelete) {
+                # With "Close the programs" on, what still holds these folders is closed first (an open file
+                # makes Windows refuse the whole folder)
+                if ($closeOpen) { Close-LeftoverHolders @($toDelete | ForEach-Object { $_.Leftover }) @($removed | ForEach-Object { $_.Program }) }
                 Write-Step 'Deleting leftovers'
                 Write-RootWarnings @($toDelete | ForEach-Object { $_.Leftover })
                 Remove-Leftovers @($toDelete | ForEach-Object { $_.Leftover }) $backup
@@ -1173,6 +1264,7 @@ if ($removed -and $lookForLeftovers) {
                 }
                 Write-RootWarnings @($toDelete | ForEach-Object { $_.Leftover })
                 if (Ask 'Delete them?' $false) {
+                    if ($closeOpen) { Close-LeftoverHolders @($toDelete | ForEach-Object { $_.Leftover }) @($removed | ForEach-Object { $_.Program }) }
                     Write-Step 'Deleting leftovers'
                     Remove-Leftovers @($toDelete | ForEach-Object { $_.Leftover }) $backup
                     Write-Host "  List of what was deleted, and the backups: $backup" -ForegroundColor DarkGray
