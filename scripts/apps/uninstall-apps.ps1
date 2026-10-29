@@ -573,6 +573,32 @@ function Get-ProgramFolders($Program) {
              Select-Object -Unique)
 }
 
+# The folders that are only this program's, to tell whether it is open and what may be closed for it. A game's
+# uninstaller is often its launcher (steam.exe, Battle.net), so the folder that comes only from the uninstaller is
+# left out when another installed program uses it too: it is the launcher's, with every other game in it. The
+# install folder, the icon's folder and a folder with the program's own name always count (Steam's own entry has
+# its icon there; Riot Client's uninstaller sits in "Riot Client", which VALORANT's uses too). $Programs: every
+# installed program, read into a table once. The leftover search keeps the wider Get-ProgramFolders, to protect
+# more, not less.
+function Get-OwnFolders($Program, [object[]]$Programs) {
+    if ($null -eq $script:FolderUsers) {
+        $script:FolderUsers = @{}      # folder (lower case) -> the keys of the programs that use it
+        foreach ($p in $Programs) {
+            foreach ($f in (Get-ProgramFolders $p)) {
+                $k = $f.TrimEnd('\').ToLowerInvariant()
+                $script:FolderUsers[$k] = @(@($script:FolderUsers[$k]) | Where-Object { $_ }) + $p.Key
+            }
+        }
+    }
+    $strong = @($Program.InstallLocation, $Program.Icon | Where-Object { $_ } | ForEach-Object { $_.TrimEnd('\').ToLowerInvariant() })
+    $name = Get-NameKey $Program.Name
+    return @(Get-ProgramFolders $Program | Where-Object {
+        $k = $_.TrimEnd('\').ToLowerInvariant()
+        ($strong -contains $k) -or ((Get-NameKey (Split-Path $k -Leaf)) -eq $name) -or
+            -not @($script:FolderUsers[$k] | Where-Object { $_ -and $_ -ne $Program.Key }).Count
+    })
+}
+
 # What the page closed to get the job done, and what stayed on disk because something is still using it: the
 # summary at the end reads these (program name -> 'closed' or 'ended', and one entry per kept item).
 $script:ClosedPrograms = @{}
@@ -903,13 +929,18 @@ function Write-RootWarnings([object[]]$Items) {
 }
 
 # True when another program keeps a file open. Opening it without sharing is the test: Windows answers that with
-# "sharing violation" only for a file somebody else has open.
+# "sharing violation" (32) or "lock violation" (33) only for a file somebody else has open. Any other error (no
+# access, gone already, a path too long) is not a file in use, and must not be reported as one.
 function Test-FileLocked([string]$File) {
     try {
         $stream = [IO.File]::Open($File, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None)
         $stream.Dispose()
         return $false
-    } catch { return $true }
+    } catch {
+        $ex = $_.Exception
+        if ($ex.InnerException) { $ex = $ex.InnerException }      # PowerShell wraps .NET errors
+        return ($ex -is [IO.IOException]) -and (($ex.HResult -band 0xFFFF) -in 32, 33)
+    }
 }
 
 # Every running program with the folder its .exe is in, read once for a whole page (a page asks about more than a
@@ -991,7 +1022,8 @@ function Get-LockedFile([string]$Path) {
 function Close-LeftoverHolders([object[]]$Items, [object[]]$Programs) {
     $folders = @($Items | Where-Object { $_.Kind -eq 'Folder' } | ForEach-Object { $_.Path })
     if (-not $folders) { return }
-    $folders += @($Programs | ForEach-Object { Get-ProgramFolders $_ })
+    # $script:programs: every program read at the start ($Programs here is only the removed ones; names ignore case)
+    $folders += @($Programs | ForEach-Object { Get-OwnFolders $_ $script:programs })
     $open = @(Get-FolderProcesses $folders)
     if (-not $open) { return }
     Write-Step 'Closing what still holds the leftovers'
@@ -1073,8 +1105,9 @@ function Remove-Leftovers([object[]]$Items, [string]$BackupDir) {
         $bin = [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin
         $how = 'Recycle Bin'
         if ($it.Kind -in 'Folder', 'Shortcut' -and -not $it.Recyclable) {
+            # Asked in the panel too: checking it in the list (maybe through "Select all") is not enough to lose it
             Write-Host "  $($it.Path) ($(Format-Size $it.Size)) doesn't fit in the Recycle Bin." -ForegroundColor Yellow
-            $forGood = if ($script:Answer) { $true } else { Ask 'Delete it for good, with no way back?' $false }
+            $forGood = Ask "Delete $(Split-Path $it.Path -Leaf) for good, with no way back?" $false
             if (-not $forGood) { Write-Result 'SKIP' "$($it.Path): kept"; continue }
             $bin = [Microsoft.VisualBasic.FileIO.RecycleOption]::DeletePermanently
             $how = 'deleted for good'
@@ -1125,7 +1158,7 @@ Write-Loading 'Looking at the programs that are open' 70
 $allRunning = @(Get-RunningProcesses)
 $items = @($programs | ForEach-Object {
     $note = (@($_.Publisher, $_.Version, (Format-Size $_.Size), $_.Date) | Where-Object { $_ }) -join ' · '
-    $open = [bool](Get-FolderProcesses (Get-ProgramFolders $_) $allRunning)
+    $open = [bool](Get-FolderProcesses (Get-OwnFolders $_ $programs) $allRunning)
     [pscustomobject]@{ Group = ''; Label = $_.Name; Note = $note; Checked = $false; Size = $_.Size; Program = $_; Open = $open }
 })
 
@@ -1164,7 +1197,7 @@ $chosen | ForEach-Object { Write-Host "    - $($_.Label)" }
 Write-Host '  Each one opens its own uninstaller: follow its window.' -ForegroundColor DarkGray
 
 # Programs still open block their uninstaller (or leave files behind): name them, and close them when asked
-$chosenFolders = @($chosen | ForEach-Object { Get-ProgramFolders $_.Program })
+$chosenFolders = @($chosen | ForEach-Object { Get-OwnFolders $_.Program $programs })
 $openNames = @(Get-FolderProcesses $chosenFolders | ForEach-Object { $_.ProcessName } | Select-Object -Unique)
 if ($openNames) { Write-Host "  Still open: $($openNames -join ', ')." -ForegroundColor Yellow }
 $closeOpen = if ($Answers) { [bool]$script:Answer.Close } else { $false }
@@ -1249,6 +1282,12 @@ if ($removed -and $lookForLeftovers) {
             $msg = "The whole folder $root will be deleted too: nothing else is in it."
             $folder | Add-Member -NotePropertyName Warn -NotePropertyValue $msg -Force
             $folder | Add-Member -NotePropertyName Danger -NotePropertyValue $true -Force
+        }
+        # What doesn't fit in the Recycle Bin is lost for good: said in red, not only in the grey note
+        foreach ($big in @($leftItems | Where-Object { $_.Leftover.Kind -in 'Folder', 'Shortcut' -and -not $_.Leftover.Recyclable })) {
+            $msg = (@('Too big for the Recycle Bin: deleted for good, with no way back. You are asked again first.', $big.Warn) | Where-Object { $_ }) -join ' '
+            $big | Add-Member -NotePropertyName Warn -NotePropertyValue $msg -Force
+            $big | Add-Member -NotePropertyName Danger -NotePropertyValue $true -Force
         }
         $backup = Join-Path $env:ProgramData ("TidyWin\uninstall-backup\{0}" -f (Get-Date -Format 'yyyy-MM-dd HHmm'))
         if ($Answers) {
