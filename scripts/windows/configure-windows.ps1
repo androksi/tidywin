@@ -530,7 +530,8 @@ $TelemetryOptions = @(
     @{ Label = 'Typing and handwriting data sent to Microsoft'; State = 'off'; Values = @(
         (RegValue 'HKCU:\SOFTWARE\Microsoft\Input\TIPC' 'Enabled' 0), (RegValue "$P\TabletPC" 'PreventHandwritingDataSharing' 1),
         (RegValue "$P\HandwritingErrorReports" 'PreventHandwritingErrorReports' 1)) }
-    # Online speech only: dictation that works on the PC itself keeps working
+    # The Settings switch. AllowInputPersonalization = 0 above already blocks it; voice typing (Win+H)
+    # needs it in many languages, so those stop either way
     @{ Label = 'Online speech recognition'; State = 'off'; Values = @(RegValue 'HKCU:\SOFTWARE\Microsoft\Speech_OneCore\Settings\OnlineSpeechPrivacy' 'HasAccepted' 0) }
 )
 if ($isWin11) { $TelemetryOptions += @{ Label = 'Account notifications in Start'; State = 'off'; Values = @(RegValue $ADV 'Start_AccountNotifications' 0) } }
@@ -1757,7 +1758,7 @@ function Get-Fields {
         'partly' { @{ badge = 'Partly off'; badgeBrush = 'Warn'; warn = 'Some of it is on. A big Windows update can turn it back on, and new TidyWin versions add more. Apply it again to turn it all off.' } }
         default  { @{} }
     }
-    New-Field $T 'Telemetry' 'toggle' 'Turn off telemetry' 'Windows stops sending usage and diagnostic data to Microsoft. Widgets are turned off too.' $false $telemetryBadge
+    New-Field $T 'Telemetry' 'toggle' 'Turn off telemetry' 'Windows stops sending usage and diagnostic data to Microsoft. Widgets are turned off too. Voice typing (Win+H) may stop working, as many languages need online speech.' $false $telemetryBadge
     New-Field $T 'Suggestions' 'toggle' 'Turn off ads and suggestions' 'No tips, no suggestions in Start and Settings, and no apps like Candy Crush installed without asking.' $false
     New-Field $T 'Edge' 'toggle' 'Quiet down Edge' 'Turns off Edge telemetry, running in the background, the sidebar, Copilot and shopping offers.' $false
     if ($isWin11) { New-Field $T 'NoRecall' 'toggle' 'Remove Recall' 'Recall saves screenshots of everything you do. It is removed and can''t be turned on again.' $false }
