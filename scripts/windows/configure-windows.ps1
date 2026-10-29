@@ -499,28 +499,66 @@ function Disable-TelemetryTasks {
     }
 }
 
-# Diagnostics, ads, activity history, search and Delivery Optimization policies.
-function Set-TelemetryPolicies {
+# Diagnostics, ads, activity history, search and Delivery Optimization policies, and the per-user switches
+# of Settings → Privacy. One table: Set-TelemetryPolicies writes it, Get-TelemetryState reads it for the page.
+$ADV = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
+$TelemetryOptions = @(
     # Diagnostic data: on Home/Pro the real minimum is 1 ("Required"); 0 only works on Enterprise/Education.
-    Set-Option 'Diagnostic data' 'minimum' (RegValue "$P\DataCollection" 'AllowTelemetry' 1),
-        (RegValue "$P\DataCollection" 'MaxTelemetryAllowed' 1), (RegValue "$P\DataCollection" 'LimitDiagnosticLogCollection' 1),
-        (RegValue "$P\DataCollection" 'LimitDumpCollection' 1), (RegValue "$P\DataCollection" 'AllowDeviceNameInTelemetry' 0),
-        (RegValue "$P\DataCollection" 'DisableOneSettingsDownloads' 1)
-    Set-Option 'Feedback requests' 'off' (RegValue "$P\DataCollection" 'DoNotShowFeedbackNotifications' 1)
-    Set-Option 'Error reporting' 'off' (RegValue "$P\Windows Error Reporting" 'Disabled' 1)
-    Set-Option 'Compatibility inventory' 'off' (RegValue "$P\AppCompat" 'DisableInventory' 1), (RegValue "$P\AppCompat" 'AITEnable' 0)
-    Set-Option 'Advertising ID' 'off' (RegValue "$P\AdvertisingInfo" 'DisabledByGroupPolicy' 1)
-    Set-Option 'Activity history' 'off' (RegValue "$P\System" 'EnableActivityFeed' 0),
-        (RegValue "$P\System" 'PublishUserActivities' 0), (RegValue "$P\System" 'UploadUserActivities' 0)
-    Set-Option 'Typing and inking personalization' 'off' (RegValue 'HKLM:\SOFTWARE\Policies\Microsoft\InputPersonalization' 'AllowInputPersonalization' 0)
-    Set-Option 'Tailored experiences' 'off' (RegValue 'HKCU:\SOFTWARE\Policies\Microsoft\Windows\CloudContent' 'DisableTailoredExperiencesWithDiagnosticData' 1)
+    @{ Label = 'Diagnostic data'; State = 'minimum'; Values = @(
+        (RegValue "$P\DataCollection" 'AllowTelemetry' 1), (RegValue "$P\DataCollection" 'MaxTelemetryAllowed' 1),
+        (RegValue "$P\DataCollection" 'LimitDiagnosticLogCollection' 1), (RegValue "$P\DataCollection" 'LimitDumpCollection' 1),
+        (RegValue "$P\DataCollection" 'AllowDeviceNameInTelemetry' 0), (RegValue "$P\DataCollection" 'DisableOneSettingsDownloads' 1)) }
+    @{ Label = 'Feedback requests'; State = 'off'; Values = @(RegValue "$P\DataCollection" 'DoNotShowFeedbackNotifications' 1) }
+    @{ Label = 'Error reporting'; State = 'off'; Values = @(RegValue "$P\Windows Error Reporting" 'Disabled' 1) }
+    @{ Label = 'Compatibility inventory'; State = 'off'; Values = @((RegValue "$P\AppCompat" 'DisableInventory' 1), (RegValue "$P\AppCompat" 'AITEnable' 0)) }
+    @{ Label = 'Advertising ID'; State = 'off'; Values = @(RegValue "$P\AdvertisingInfo" 'DisabledByGroupPolicy' 1) }
+    @{ Label = 'Activity history'; State = 'off'; Values = @(
+        (RegValue "$P\System" 'EnableActivityFeed' 0), (RegValue "$P\System" 'PublishUserActivities' 0), (RegValue "$P\System" 'UploadUserActivities' 0)) }
+    @{ Label = 'Typing and inking personalization'; State = 'off'; Values = @(RegValue 'HKLM:\SOFTWARE\Policies\Microsoft\InputPersonalization' 'AllowInputPersonalization' 0) }
+    @{ Label = 'Tailored experiences'; State = 'off'; Values = @(RegValue 'HKCU:\SOFTWARE\Policies\Microsoft\Windows\CloudContent' 'DisableTailoredExperiencesWithDiagnosticData' 1) }
     # Search: no Bing/web results, no "search highlights", no Cortana
-    Set-Option 'Bing and web results in Start search' 'off' (RegValue "$P\Windows Search" 'DisableWebSearch' 1),
-        (RegValue "$P\Windows Search" 'ConnectedSearchUseWeb' 0), (RegValue 'HKCU:\SOFTWARE\Policies\Microsoft\Windows\Explorer' 'DisableSearchBoxSuggestions' 1)
-    Set-Option 'Search highlights' 'off' (RegValue "$P\Windows Search" 'EnableDynamicContentInWSB' 0)
-    Set-Option 'Cortana' 'off' (RegValue "$P\Windows Search" 'AllowCortana' 0)
+    @{ Label = 'Bing and web results in Start search'; State = 'off'; Values = @(
+        (RegValue "$P\Windows Search" 'DisableWebSearch' 1), (RegValue "$P\Windows Search" 'ConnectedSearchUseWeb' 0),
+        (RegValue 'HKCU:\SOFTWARE\Policies\Microsoft\Windows\Explorer' 'DisableSearchBoxSuggestions' 1)) }
+    @{ Label = 'Search highlights'; State = 'off'; Values = @(RegValue "$P\Windows Search" 'EnableDynamicContentInWSB' 0) }
+    @{ Label = 'Cortana'; State = 'off'; Values = @(RegValue "$P\Windows Search" 'AllowCortana' 0) }
     # Delivery Optimization: updates only from Microsoft, no sharing with other PCs
-    Set-Option 'Updates' 'only from Microsoft, not shared with other PCs' (RegValue "$P\DeliveryOptimization" 'DODownloadMode' 0)
+    @{ Label = 'Updates'; State = 'only from Microsoft, not shared with other PCs'; Values = @(RegValue "$P\DeliveryOptimization" 'DODownloadMode' 0) }
+    # Settings → Privacy, for the current user. Start_TrackProgs off also empties "Most used" in Start.
+    @{ Label = 'Tracking which apps you open'; State = 'off'; Values = @(RegValue $ADV 'Start_TrackProgs' 0) }
+    @{ Label = 'Language list shared with websites'; State = 'off'; Values = @(RegValue 'HKCU:\Control Panel\International\User Profile' 'HttpAcceptLanguageOptOut' 1) }
+    @{ Label = 'Typing and handwriting data sent to Microsoft'; State = 'off'; Values = @(
+        (RegValue 'HKCU:\SOFTWARE\Microsoft\Input\TIPC' 'Enabled' 0), (RegValue "$P\TabletPC" 'PreventHandwritingDataSharing' 1),
+        (RegValue "$P\HandwritingErrorReports" 'PreventHandwritingErrorReports' 1)) }
+    # Online speech only: dictation that works on the PC itself keeps working
+    @{ Label = 'Online speech recognition'; State = 'off'; Values = @(RegValue 'HKCU:\SOFTWARE\Microsoft\Speech_OneCore\Settings\OnlineSpeechPrivacy' 'HasAccepted' 0) }
+)
+if ($isWin11) { $TelemetryOptions += @{ Label = 'Account notifications in Start'; State = 'off'; Values = @(RegValue $ADV 'Start_AccountNotifications' 0) } }
+
+function Set-TelemetryPolicies {
+    foreach ($o in $TelemetryOptions) { Set-Option $o.Label $o.State $o.Values }
+}
+
+# How much of "Turn off telemetry" is in place now, for the badge on the page: 'off', 'partly' or 'on'.
+# A big Windows update can turn services and tasks back on, so 'partly' says it is worth applying again.
+function Get-TelemetryState {
+    $checks = @()
+    foreach ($svc in 'DiagTrack', 'dmwappushservice') {
+        $s = Get-Service $svc -ErrorAction SilentlyContinue
+        if ($s) { $checks += $s.StartType -eq 'Disabled' }
+    }
+    foreach ($t in $TelemetryTasks) {
+        $task = Get-ScheduledTask -TaskPath $t[0] -TaskName $t[1] -ErrorAction SilentlyContinue
+        if ($task) { $checks += $task.State -eq 'Disabled' }
+    }
+    foreach ($o in $TelemetryOptions) {
+        foreach ($v in $o.Values) {
+            $current = (Get-ItemProperty -Path $v.Path -Name $v.Name -ErrorAction SilentlyContinue).($v.Name)
+            $checks += $null -ne $current -and "$current" -eq "$($v.Value)"
+        }
+    }
+    $done = @($checks | Where-Object { $_ }).Count
+    if ($done -eq $checks.Count) { 'off' } elseif ($done) { 'partly' } else { 'on' }
 }
 
 # Widgets (Windows 11) / News and interests (Windows 10).
@@ -1682,6 +1720,9 @@ function Get-MinuteOptions([int[]]$Choices, $Current) {
 Write-Loading 'Reading the network adapters' 60
 $dnsAdapters = @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object Status -ne 'Disabled' | Sort-Object Name)
 
+Write-Loading 'Checking the telemetry settings' 62
+$telemetryState = Get-TelemetryState
+
 Write-Loading 'Reading the power settings' 65
 $canHibernate = Test-HibernateEnabled
 $powerModes = @(@{ Key = 'ac'; Battery = $false; Label = 'Plugged in' })
@@ -1711,7 +1752,12 @@ function Get-PowerFields {
 function Get-Fields {
     $T = 'Privacy'; $A = 'Apps'; $L = 'Appearance'; $E = 'File Explorer'; $U = 'System'; $N = 'Network'; $M = 'Misc'
 
-    New-Field $T 'Telemetry' 'toggle' 'Turn off telemetry' 'Windows stops sending usage and diagnostic data to Microsoft. Widgets are turned off too.' $false
+    $telemetryBadge = switch ($telemetryState) {
+        'off'    { @{ badge = 'Already off'; badgeBrush = 'Ok' } }
+        'partly' { @{ badge = 'Partly off'; badgeBrush = 'Warn'; warn = 'Some of it is on. A big Windows update can turn it back on, and new TidyWin versions add more. Apply it again to turn it all off.' } }
+        default  { @{} }
+    }
+    New-Field $T 'Telemetry' 'toggle' 'Turn off telemetry' 'Windows stops sending usage and diagnostic data to Microsoft. Widgets are turned off too.' $false $telemetryBadge
     New-Field $T 'Suggestions' 'toggle' 'Turn off ads and suggestions' 'No tips, no suggestions in Start and Settings, and no apps like Candy Crush installed without asking.' $false
     New-Field $T 'Edge' 'toggle' 'Quiet down Edge' 'Turns off Edge telemetry, running in the background, the sidebar, Copilot and shopping offers.' $false
     if ($isWin11) { New-Field $T 'NoRecall' 'toggle' 'Remove Recall' 'Recall saves screenshots of everything you do. It is removed and can''t be turned on again.' $false }

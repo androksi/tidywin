@@ -230,6 +230,13 @@ function Remove-TelemetryPolicies {
     Remove-Reg "$P\AppCompat" 'DisableInventory','AITEnable'
     Remove-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\InputPersonalization' 'AllowInputPersonalization'
     Remove-Reg 'HKCU:\SOFTWARE\Policies\Microsoft\Windows\CloudContent' 'DisableTailoredExperiencesWithDiagnosticData'
+    # Settings → Privacy switches: without the value, each one is back to the Windows default
+    Remove-Reg 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'Start_TrackProgs','Start_AccountNotifications'
+    Remove-Reg 'HKCU:\Control Panel\International\User Profile' 'HttpAcceptLanguageOptOut'
+    Remove-Reg 'HKCU:\SOFTWARE\Microsoft\Input\TIPC' 'Enabled'
+    Remove-Reg "$P\TabletPC" 'PreventHandwritingDataSharing'
+    Remove-Reg "$P\HandwritingErrorReports" 'PreventHandwritingErrorReports'
+    Remove-Reg 'HKCU:\SOFTWARE\Microsoft\Speech_OneCore\Settings\OnlineSpeechPrivacy' 'HasAccepted'
 }
 
 function Remove-ActivityPolicies { Remove-Reg "$P\System" 'EnableActivityFeed','PublishUserActivities','UploadUserActivities' }
