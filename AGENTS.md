@@ -53,7 +53,7 @@ The menu is `Get-Menu` in `scripts/TidyWin.ps1` (section 1). Every entry is `New
 | Group | Page (id) | Script(s) | Notes |
 |---|---|---|---|
 | Set up | Windows (`windows`) | `windows/configure-windows.ps1` | Tabs: Privacy, Apps, Appearance, File Explorer, Screen, System, Power, Network, Misc. Restore point + log on the Desktop |
-| Set up | Updates (`updates`) | `windows/configure-updates.ps1` | Normal / Security only (defer features 365 days) / Off (red "danger" warning) |
+| Set up | Updates (`updates`) | `windows/configure-updates.ps1` | Normal / Security only (defer features 365 days) / Off (red "danger" warning); Drivers from Windows Update or not, apart from the mode |
 | Set up | Apps (`apps`) | `apps/configure-apps.ps1` | 106 apps in category tabs, WinGet/Store/Windows feature; **Search** tab (`-Search`) |
 | Set up | Fonts (`fonts`) | `fonts/install-fonts.ps1` | 19 fonts; `-Revert` undoes |
 | Set up | Browsers (`browsers`) | `browsers/configure-chrome.ps1`, `configure-brave.ps1`, `configure-firefox.ps1` | One page, a switch per browser; each script describes its own part |

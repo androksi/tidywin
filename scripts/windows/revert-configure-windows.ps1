@@ -248,6 +248,14 @@ function Remove-SearchPolicies {
 
 function Remove-RecallPolicies { Remove-Reg "$P\WindowsAI" 'AllowRecallEnablement','DisableAIDataAnalysis' }
 
+# Click to Do, and the AI in Notepad and Paint
+function Remove-AiPolicies {
+    Remove-Reg "$P\WindowsAI" 'DisableClickToDo'
+    Remove-Reg 'HKCU:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI' 'DisableClickToDo'
+    Remove-Reg 'HKLM:\SOFTWARE\Policies\WindowsNotepad' 'DisableAIFeatures'
+    Remove-Reg 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Paint' 'DisableCocreator','DisableImageCreator','DisableGenerativeFill'
+}
+
 function Remove-WidgetsPolicies {
     Remove-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Dsh' 'AllowNewsAndInterests'
     Remove-Reg "$P\Windows Feeds" 'EnableFeeds'
@@ -457,6 +465,7 @@ $fields = @(
     New-Field $Pv 'Activity' 'toggle' 'Turn activity history back on' 'Windows can keep a history of the apps and files you use again.' $false
     New-Field $Pv 'WebSearch' 'toggle' 'Bring web results back to search' 'The Start search shows Bing results and search highlights again.' $false
     New-Field $Pv 'Recall' 'toggle' 'Allow Recall again' 'Recall can be turned on again in Settings, on PCs that support it.' $false
+    New-Field $Pv 'AiFeatures' 'toggle' 'Turn the AI features back on' 'Click to Do and the AI in Notepad and Paint come back.' $false
     New-Field $Ap 'Widgets' 'toggle' 'Bring Widgets back' 'Widgets and the news on the taskbar can be turned on again.' $false
     New-Field $Ap 'OneDrive' 'toggle' 'Allow OneDrive again' 'OneDrive can run and sync again. To install it back: winget install Microsoft.OneDrive.' $false
     New-Field $Ap 'GameDVR' 'toggle' 'Turn game recording back on' 'The Game Bar can record games again. The Xbox apps come back from the Microsoft Store.' $false
@@ -499,6 +508,7 @@ if ($v.Suggestions)          { Write-Step 'Suggestions and ads back';           
 if ($v.Activity)             { Write-Step 'Activity history back on';               Remove-ActivityPolicies; Write-Done 'Back to the Windows default' }
 if ($v.WebSearch)            { Write-Step 'Web results back in search';             Remove-SearchPolicies; Write-Done 'Back to the Windows default' }
 if ($v.Recall)               { Write-Step 'Recall allowed again';                   Remove-RecallPolicies; Write-Done 'Back to the Windows default' }
+if ($v.AiFeatures)           { Write-Step 'AI features back on';                    Remove-AiPolicies; Write-Done 'Back to the Windows default' }
 if ($v.Widgets)              { Write-Step 'Widgets back';                           Remove-WidgetsPolicies; Write-Done 'Back to the Windows default' }
 if ($v.OneDrive)             { Write-Step 'OneDrive allowed again';                 Remove-OneDrivePolicy; Write-Done 'Back to the Windows default' }
 if ($v.GameDVR)              { Write-Step 'Game recording back on';                 Restore-GameDVR; Write-Done 'Back to the Windows default' }

@@ -74,7 +74,7 @@ function Get-Menu {
             'Creates a restore point first and saves a log on your Desktop.'
         ) 'Start' @(New-Step 'windows/configure-windows.ps1') -Form
 
-        New-MenuEntry $setup 'updates' 'E895' 'Updates' 'Updates' 'Choose how Windows Update works.' @(
+        New-MenuEntry $setup 'updates' 'E895' 'Updates' 'Updates' 'Choose how Windows Update works, and where drivers come from.' @(
             'Normal: the Windows default.'
             'Security only: monthly security fixes; new Windows versions wait 365 days.'
             'Off: no updates at all. Not safe.'

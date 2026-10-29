@@ -877,6 +877,32 @@ function Disable-Recall {
     Write-Done 'Recall: removed and blocked'; Write-Host '  After restarting. Recall only exists on Copilot+ PCs.' -ForegroundColor DarkGray
 }
 
+# The other AI features, one item each on the page (official policies, Pro and up). The Copilot app has no
+# policy for Pro (RemoveMicrosoftCopilotApp is Enterprise/Education), so it is removed in the Apps tab.
+$AiFeatures = [ordered]@{
+    ClickToDo = @{ Label = 'Click to Do'; Note = 'Win + click reads what is on the screen and suggests actions. Copilot+ PCs only.'; Values = @(
+        (RegValue "$P\WindowsAI" 'DisableClickToDo' 1), (RegValue 'HKCU:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI' 'DisableClickToDo' 1)) }
+    Notepad   = @{ Label = 'AI in Notepad'; Note = 'Copilot rewrites and summarizes your text, which goes to Microsoft.'; Values = @(
+        (RegValue 'HKLM:\SOFTWARE\Policies\WindowsNotepad' 'DisableAIFeatures' 1)) }
+    Paint     = @{ Label = 'AI in Paint'; Note = 'Cocreator, Image Creator and generative fill.'; Values = @(
+        (RegValue 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Paint' 'DisableCocreator' 1),
+        (RegValue 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Paint' 'DisableImageCreator' 1),
+        (RegValue 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Paint' 'DisableGenerativeFill' 1)) }
+}
+
+# True when every value of the feature is already set (shown as "Already off" on the page)
+function Test-AiFeatureOff([string]$Id) {
+    foreach ($v in $AiFeatures[$Id].Values) {
+        if ("$((Get-ItemProperty -Path $v.Path -Name $v.Name -ErrorAction SilentlyContinue).($v.Name))" -ne "$($v.Value)") { return $false }
+    }
+    return $true
+}
+
+function Disable-AiFeatures([string[]]$Ids) {
+    foreach ($id in $Ids) { Set-Option $AiFeatures[$id].Label 'off' $AiFeatures[$id].Values }
+    if ($Ids -contains 'Notepad' -or $Ids -contains 'Paint') { Write-Host '  Close and open Notepad and Paint again so they pick it up.' -ForegroundColor DarkGray }
+}
+
 # WPBT (Windows Platform Binary Table): lets the PC's firmware hand Windows a program to run at every
 # boot. Manufacturers use it to reinstall their apps (Armoury Crate, Vantage...) even after a clean install.
 # This stops Windows from running it; the firmware itself is not touched.
@@ -1762,6 +1788,11 @@ function Get-Fields {
     New-Field $T 'Suggestions' 'toggle' 'Turn off ads and suggestions' 'No tips, no suggestions in Start and Settings, and no apps like Candy Crush installed without asking.' $false
     New-Field $T 'Edge' 'toggle' 'Quiet down Edge' 'Turns off Edge telemetry, running in the background, the sidebar, Copilot and shopping offers.' $false
     if ($isWin11) { New-Field $T 'NoRecall' 'toggle' 'Remove Recall' 'Recall saves screenshots of everything you do. It is removed and can''t be turned on again.' $false }
+    if ($isWin11) {
+        New-Field $T 'NoAi' 'checklist' 'Turn off AI features' 'Pick the ones to turn off. To remove Copilot itself, check it in the Apps tab.' @() @{
+            items = @($AiFeatures.Keys | ForEach-Object { [ordered]@{ value = $_; label = $AiFeatures[$_].Label; note = $AiFeatures[$_].Note; group = ''
+                status = $(if (Test-AiFeatureOff $_) { 'Already off' } else { '' }) } }) }
+    }
     New-Field $T 'Security' 'toggle' 'Block unwanted apps' 'Windows Security blocks potentially unwanted apps and downloads, like installers that bundle extras, and shows fewer minor notices.' $false
     New-Field $T 'HideAreas' 'toggle' 'Hide account areas in Windows Security' '"Account protection" and "Device security" go away. They only ask you to sign in with a Microsoft account; nothing is turned off.' $false
     New-Field $T 'NoDeviceApps' 'toggle' 'Don''t install device apps' 'Windows stops downloading manufacturer apps when you connect a mouse, keyboard or headset. Drivers still install.' $false
@@ -1954,6 +1985,7 @@ $opt = [ordered]@{
     OneDrive = & $flag 'OneDrive'; Edge = & $flag 'Edge'; NoRecall = & $flag 'NoRecall'; NoEdgeShortcut = & $flag 'NoEdgeShortcut'
     Security = & $flag 'Security'; RootFolders = & $flag 'RootFolders'; NoDeviceApps = & $flag 'NoDeviceApps'; NoWpbt = & $flag 'NoWpbt'
     HideAreas = & $flag 'HideAreas'
+    NoAi = @(@($values.NoAi) | Where-Object { $AiFeatures.Contains("$_") } | ForEach-Object { "$_" })
     Theme = $(if ($themeIds -contains "$($values.Theme)") { "$($values.Theme)" } else { 'Keep' })
     Display = $(if ($displayChanges) { ($displayChanges | ForEach-Object { $_.Text }) -join '; ' } else { 'Keep' })
     Taskbar = $(if ($taskbarIds -contains "$($values.Taskbar)") { "$($values.Taskbar)" } else { 'Keep' })
@@ -1974,7 +2006,7 @@ $opt = [ordered]@{
 
 $chosen = @($opt.Keys | Where-Object {
     $v = $opt[$_]
-    if ($v -is [bool]) { $v } elseif ($_ -eq 'RemoveApps') { @($v).Count -gt 0 } else { "$v" -ne 'Keep' }
+    if ($v -is [bool]) { $v } elseif ($_ -in 'RemoveApps', 'NoAi') { @($v).Count -gt 0 } else { "$v" -ne 'Keep' }
 })
 if (-not $chosen) { Write-Host "`n  Nothing was selected, so nothing was changed." -ForegroundColor DarkGray; return }
 
@@ -1986,7 +2018,7 @@ $labels = @{
     ShowExtensions = 'Extensions'; HideFrequent = 'No frequent'; UnpinMusic = 'No Music in Quick access'; HideRecent = 'No recent'; HideHomeGallery = 'No Home/Gallery'; ClassicMenu = 'Classic menu'; NoSnap = 'No Snap'; ThinBorder = 'Thin border'
     LongPaths = 'Long paths'; EndTask = 'End task'; Sudo = 'Sudo'; ClipboardHistory = 'Win+V history'
     NoMouseAccel = 'No acceleration'; NoStickyKeys = 'No Sticky Keys'; DNS = 'DNS'
-    NoDeviceApps = 'No device apps'; NoWpbt = 'No WPBT'; NoRecall = 'No Recall'; NoEdgeShortcut = 'No Edge shortcut'; NumLock = 'Num Lock'; NoFastStartup = 'No Fast Startup'; BatteryPercent = 'Battery %'; ShowHidden = 'Hidden files'
+    NoDeviceApps = 'No device apps'; NoWpbt = 'No WPBT'; NoRecall = 'No Recall'; NoAi = 'AI features'; NoEdgeShortcut = 'No Edge shortcut'; NumLock = 'Num Lock'; NoFastStartup = 'No Fast Startup'; BatteryPercent = 'Battery %'; ShowHidden = 'Hidden files'
     NoFolderSniff = 'No folder discovery'; VerboseBsod = 'Detailed blue screen'; NoHibernate = 'No hibernation'; NoNewAppAlert = 'No "new app" prompt'; Power = 'Power'
 }
 $answerLines = @()      # also written to the log file
@@ -2005,6 +2037,7 @@ if ($chosen) {
                 elseif ($key -eq 'Search')   { $searchNames[[array]::IndexOf($searchIds, $value)] }
                 elseif ($key -eq 'TaskView') { $taskViewNames[[array]::IndexOf($taskViewIds, $value)] }
                 elseif ($key -eq 'RemoveApps') { @($value | ForEach-Object { Get-AppLabel $_ } | Select-Object -Unique) -join ', ' }
+                elseif ($key -eq 'NoAi') { @($value | ForEach-Object { $AiFeatures[$_].Label }) -join ', ' }
                 else { $value }
         $line = if ($text) { "    - ${name}: $text" } else { "    - $name" }
         if (-not $Answers) { Write-Host $line }
@@ -2062,6 +2095,7 @@ if ($opt.RemoveApps) {
 if ($opt.OneDrive) { Invoke-Step 'Removing OneDrive'                                          { Remove-OneDrive } }
 if ($opt.Edge)     { Invoke-Step 'Edge: no telemetry, background mode, sidebar or shopping' { Set-EdgePolicies } }
 if ($opt.NoRecall) { Invoke-Step 'Recall' { Disable-Recall } }
+if ($opt.NoAi)     { Invoke-Step 'AI features' { Disable-AiFeatures $opt.NoAi } }
 if ($opt.NoEdgeShortcut) { Invoke-Step 'Edge desktop shortcut' { Remove-EdgeDesktopShortcut } }
 if ($opt.Security) { Invoke-Step 'Windows Security'                                        { Set-WindowsSecurity } }
 if ($opt.RootFolders) { Invoke-Step 'Folders in the drive root (inetpub and PerfLogs)'          { Clear-SystemDriveRoot } }

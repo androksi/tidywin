@@ -13,6 +13,8 @@
         Off ............ UNSAFE. Policy NoAutoUpdate, and the Windows Update, Update Orchestrator and
                          Windows Update Medic services disabled and stopped. Their startup types are saved
                          first to %ProgramData%\TidyWin\updates.json, and Normal puts them back.
+    Drivers, on their own: from Windows Update (the default) or not (policy ExcludeWUDriversInQualityUpdate,
+    Pro and up), so Windows stops replacing the drivers you installed from the manufacturer.
     Safe to run more than once.
 
     FILE LAYOUT
@@ -326,6 +328,23 @@ function Set-OffMode {
     Write-Host '  This PC no longer gets security fixes. Turn it back to Normal as soon as you can.' -ForegroundColor Red
 }
 
+# Drivers from Windows Update or not. Apart from the mode: Normal leaves this as it is.
+function Test-DriversExcluded { (Get-RegValue $WU 'ExcludeWUDriversInQualityUpdate') -eq 1 }
+
+function Set-Drivers([bool]$FromWindowsUpdate) {
+    if ($FromWindowsUpdate) {
+        if (-not (Test-DriversExcluded)) { Write-Host '  [--] Drivers: already from Windows Update' -ForegroundColor DarkGray; return }
+        Remove-Policy $WU 'ExcludeWUDriversInQualityUpdate'
+        Write-Result 'OK' 'Drivers: from Windows Update again'
+    } else {
+        if (Test-DriversExcluded) { Write-Host '  [--] Drivers: already not from Windows Update' -ForegroundColor DarkGray; return }
+        Set-Policy $WU 'ExcludeWUDriversInQualityUpdate' 1
+        Write-Result 'OK' 'Drivers: no longer from Windows Update'
+        Write-Host '  Update them from the manufacturer: the NVIDIA app, AMD Software, Intel Driver & Support Assistant...' -ForegroundColor DarkGray
+        if ($script:IsHome) { Write-Result 'WARN' 'Windows Home ignores this policy: drivers may still come from Windows Update.' }
+    }
+}
+
 #endregion
 
 
@@ -336,23 +355,30 @@ if (-not $script:Panel) { Write-Host "`nConfigure-Updates" -ForegroundColor Gree
 Write-Loading 'Reading how Windows Update is set up'
 $script:IsHome = (Get-RegValue 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' 'EditionID') -match 'Core'
 $current = Get-UpdateMode
+$driversExcluded = Test-DriversExcluded
 $modeNames = @{ Normal = 'Normal'; Security = 'Security only'; Off = 'Off' }
 
 $T = 'Updates'
 $fields = @(
     New-Field $T 'Mode' 'choice' 'Windows Update' "Now: $($modeNames[$current]). Pick a mode to change it." '' @{ options = @((Opt 'Normal' 'Normal'), (Opt 'Security' 'Security only'), (Opt 'Off' 'Off')) }
     New-Field $T 'AboutNormal' 'info' 'Normal' 'The Windows default, like a new PC: security fixes every month and the new version of Windows about once a year. Undoes Security only and Off.' $null @{ when = @{ field = 'Mode'; is = 'Normal' } }
-    New-Field $T 'AboutSecurity' 'info' 'Security only' 'Security and quality fixes keep coming every month, as usual. The yearly feature update, a new version of Windows like 24H2 to 25H2, waits 365 days, so it arrives already tested and fixed. Drivers and Defender keep updating.' $null @{
+    New-Field $T 'AboutSecurity' 'info' 'Security only' 'Security and quality fixes keep coming every month, as usual. The yearly feature update, a new version of Windows like 24H2 to 25H2, waits 365 days, so it arrives already tested and fixed. Defender keeps updating, and drivers too unless you turn them off below.' $null @{
         when = @{ field = 'Mode'; is = 'Security' }; warn = $(if ($script:IsHome) { 'Windows Home ignores this setting: it only works on Pro, Enterprise and Education.' } else { '' }) }
     New-Field $T 'AboutOff' 'info' 'Off: not safe' 'Windows stops looking for, downloading and installing every update, security fixes included. Its services are turned off, and Microsoft Store downloads can fail. Normal turns everything back on.' $null @{
         when = @{ field = 'Mode'; is = 'Off' }; danger = $true
         warn = 'UNSAFE. Without updates this PC no longer gets security fixes: every flaw found in Windows from now on stays open, and malware can use it through a website, a file or the network. Only for a short time and for a specific reason. Turn it back to Normal as soon as you can.' }
+    New-Field $T 'Drivers' 'choice' 'Drivers' "Now: $(if ($driversExcluded) { 'not from Windows Update' } else { 'from Windows Update' }). Pick one to change it. The mode above doesn't touch this." '' @{
+        options = @((Opt 'On' 'From Windows Update'), (Opt 'Off' 'Not from Windows Update')) }
+    New-Field $T 'AboutDriversOn' 'info' 'From Windows Update' 'The Windows default. Windows installs and updates the drivers it has for your devices.' $null @{ when = @{ field = 'Drivers'; is = 'On' } }
+    New-Field $T 'AboutDriversOff' 'info' 'Not from Windows Update' 'Windows stops replacing the drivers you installed, like the video card one, with its own, often older. Windows and security updates keep coming. You update the drivers yourself, from the manufacturer''s app or site.' $null @{
+        when = @{ field = 'Drivers'; is = 'Off' }; warn = $(if ($script:IsHome) { 'Windows Home ignores this setting: it only works on Pro, Enterprise and Education.' } else { '' }) }
 )
 if ($Describe) { Write-OptionsPage $Describe $fields; return }
 
 $v = Read-Options $fields $Answers
 $mode = "$($v.Mode)"
-if (-not $mode) { Write-Host 'Nothing was selected, so nothing was changed.'; return }
+$drivers = "$($v.Drivers)"
+if (-not $mode -and -not $drivers) { Write-Host 'Nothing was selected, so nothing was changed.'; return }
 if (-not $Answers -and $mode -eq 'Off') {
     Write-Host ''
     Write-Host '  UNSAFE: this PC will no longer get security fixes until you turn Windows Update back to Normal.' -ForegroundColor Red
@@ -364,6 +390,8 @@ switch ($mode) {
     'Security' { Write-Step 'Windows Update: Security only'; Set-SecurityOnlyMode }
     'Off'      { Write-Step 'Windows Update: Off';           Set-OffMode }
 }
-Write-Host "`nDone. Now: $($modeNames[(Get-UpdateMode)])." -ForegroundColor Green
+if ($drivers -in 'On', 'Off') { Write-Step 'Drivers'; Set-Drivers ($drivers -eq 'On') }
+$driversNow = if (Test-DriversExcluded) { 'not from Windows Update' } else { 'from Windows Update' }
+Write-Host "`nDone. Now: $($modeNames[(Get-UpdateMode)]), drivers $driversNow." -ForegroundColor Green
 
 #endregion

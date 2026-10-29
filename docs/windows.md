@@ -28,6 +28,7 @@ Every option shows on one page, in tabs. **Nothing comes selected**: only what y
 | OneDrive | Uninstalls OneDrive and keeps it from coming back. |
 | Edge | Edge policies: no telemetry, background mode, sidebar, Copilot or shopping. |
 | Recall | Windows 11: removes Recall and stops it from being turned on (official policies). Only exists on Copilot+ PCs. |
+| AI features | Windows 11: pick which to turn off, by official policy: Click to Do (Copilot+ PCs), the AI in Notepad and the AI in Paint (Cocreator, Image Creator, generative fill). The Copilot app has no policy for Pro, so it is removed in the Apps tab. |
 | Edge shortcut | Deletes the Edge desktop shortcut and stops Edge updates from creating it again. |
 | Windows Security | Turns on blocking of potentially unwanted apps and downloads, and hides unimportant notifications. |
 | Device apps | Doesn't download manufacturer apps and icons when devices are connected (drivers still come). |
@@ -103,6 +104,9 @@ The page shows how Windows Update is set up now and three modes, nothing picked:
 | Normal | The Windows default: removes what the other two modes set and turns the services back on. |
 | Security only | Security and quality fixes keep coming every month. The yearly feature update (a new version of Windows, like 24H2 → 25H2) waits 365 days, the most Windows allows. Windows Update for Business policy (`DeferFeatureUpdates`): Pro, Enterprise and Education; Windows Home ignores it. |
 | Off | **Not safe**, shown in red on the page. Sets the `NoAutoUpdate` policy and disables and stops the Windows Update, Update Orchestrator and Windows Update Medic services (Windows may protect the last one). Their startup types are saved first to `%ProgramData%\TidyWin\updates.json`, and Normal puts them back. Microsoft Store downloads can fail while it is off. |
+
+Apart from the mode, **Drivers** picks where drivers come from. **Not from Windows Update** sets the `ExcludeWUDriversInQualityUpdate` policy (Pro, Enterprise and Education), so Windows stops replacing the drivers you installed, like the video card one. Windows and security updates keep coming, and you update the drivers from the manufacturer. **From Windows Update** removes the policy. Normal leaves this as it is.
+
 ## Cleanup
 
 In the [TidyWin panel](../README.md#quick-start): **Maintenance → Disk space**. From a local copy:
@@ -176,5 +180,5 @@ In the [TidyWin panel](../README.md#quick-start): **Undo → Windows**. From a l
 
 | Feature | What it does |
 |---|---|
-| Revert | A page with one switch per subject, all off: only what you turn on is undone. Covers telemetry, policies, suggestions, border, Snap windows, DNS, Game DVR, the Print Screen key, the Start ad shortcuts (when the app is installed), Recall, Edge (including the shortcut policy), Windows Security areas, WPBT, hibernation (when it is off), Fast Startup, Num Lock, Home/Gallery, Music in Quick access, classic right-click menu, folder discovery, the "new app installed" prompt, devices, blue screen, `inetpub` and update sharing. |
+| Revert | A page with one switch per subject, all off: only what you turn on is undone. Covers telemetry, policies, suggestions, border, Snap windows, DNS, Game DVR, the Print Screen key, the Start ad shortcuts (when the app is installed), Recall, the AI features, Edge (including the shortcut policy), Windows Security areas, WPBT, hibernation (when it is off), Fast Startup, Num Lock, Home/Gallery, Music in Quick access, classic right-click menu, folder discovery, the "new app installed" prompt, devices, blue screen, `inetpub` and update sharing. |
 | Not reverted | Removed apps (Xbox and Snipping Tool included; reinstall from the Microsoft Store), OneDrive, screen resolution, refresh rate and scale, screen and sleep times, theme, taskbar, extensions, hidden files and battery (undo through Settings). |
