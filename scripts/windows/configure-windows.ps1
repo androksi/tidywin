@@ -1512,9 +1512,9 @@ function Set-DohTemplate([string[]]$Servers, [string]$Template) {
     if ($known) { Write-Host "  $($known -join ', '): a server Windows already knows, so it keeps its own encrypted address." -ForegroundColor DarkGray }
     if (-not $unknown) { Write-Host '  The DNS over HTTPS address was not used: every server is one Windows already knows.' -ForegroundColor DarkYellow; return }
     Write-Done "DNS over HTTPS: $Template, for $($unknown -join ', ')"
+    # Usually right (two addresses from one provider), so a grey note, not a warning
     if ($unknown.Count -gt 1) {
-        Write-Host "  The same DNS over HTTPS address went to $($unknown -join ', '). They must be from the same provider," -ForegroundColor Yellow
-        Write-Host '  like the two addresses NextDNS gives you. A server from another provider would stop answering.' -ForegroundColor Yellow
+        Write-Host '  These servers share one address. That is right when they come from the same provider.' -ForegroundColor DarkGray
     }
 }
 
