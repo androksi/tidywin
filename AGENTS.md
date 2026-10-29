@@ -34,7 +34,7 @@ Core promises (also in the README; never break them):
 ```
 AGENTS.md / CLAUDE.md        this guide (CLAUDE.md imports it)
 README.md                    centered header, disclaimer, "What's inside" table, counts (apps, fonts)
-assets/banner.png            panel screenshot used by the README (2347×1581, dark theme)
+assets/banner.png            panel screenshot used by the README (2347×1845, dark theme)
 assets/logo.svg              the logo (also drawn in code by New-Logo in TidyWin.ps1)
 docs/*.md                    one page per area: windows, apps, fonts, browsers, backup, drivers, reinstall
 scripts/TidyWin.ps1          the panel (≈2,300 lines; XAML lives inside it)
