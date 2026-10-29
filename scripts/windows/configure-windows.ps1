@@ -1522,11 +1522,12 @@ function Set-DohTemplate([string[]]$Servers, [string]$Template) {
 function Set-DNS([string[]]$V4, [string[]]$V6, [string]$Template, [string[]]$Adapters) {
     $base = 'HKLM:\SYSTEM\CurrentControlSet\Services\Dnscache\InterfaceSpecificParameters'
     $all = @($V4) + @($V6)
-    $adapters = @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object Status -ne 'Disabled')
-    if ($Adapters) { $adapters = @($adapters | Where-Object { $Adapters -contains "$($_.InterfaceGuid)" }) }
-    if (-not $adapters) { throw $(if ($Adapters) { 'the adapters picked are no longer on this PC' } else { 'no physical network adapter found' }) }
+    # $nics, not $adapters: variables ignore case, so $adapters would overwrite the $Adapters parameter
+    $nics = @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object Status -ne 'Disabled')
+    if ($Adapters) { $nics = @($nics | Where-Object { $Adapters -contains "$($_.InterfaceGuid)" }) }
+    if (-not $nics) { throw $(if ($Adapters) { 'the adapters picked are no longer on this PC' } else { 'no physical network adapter found' }) }
     if ($isWin11 -and $Template) { Set-DohTemplate $all $Template }
-    foreach ($adapter in $adapters) {
+    foreach ($adapter in $nics) {
         Set-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -ServerAddresses $all -ErrorAction Stop
         if ($isWin11) {
             $doh = "$base\$($adapter.InterfaceGuid)\DohInterfaceSettings"
