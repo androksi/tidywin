@@ -2,7 +2,7 @@
 
 # Back up and Restore
 
-Save your drivers, apps and Wi-Fi networks before formatting, and put them back afterwards. In the [TidyWin panel](../README.md#quick-start): **Back up → Create** and **Back up → Restore**.
+Save your drivers, apps, Wi-Fi networks and BitLocker recovery key before formatting, and put them back afterwards. In the [TidyWin panel](../README.md#quick-start): **Back up → Create** and **Back up → Restore**.
 
 ## Create
 
@@ -11,6 +11,7 @@ Save your drivers, apps and Wi-Fi networks before formatting, and put them back 
    - **Drivers**: the ones Windows doesn't bring by itself, by type (video, network, audio...), with the device, version and size of each. Video drivers take 2 to 3 GB each. [Details](drivers.md)
    - **Apps**: the apps WinGet can install again, by name, Microsoft Store apps included. Only the apps, not their settings or files. [Details](apps.md#moving-apps-to-another-pc)
    - **Wi-Fi networks**: the saved networks, by name, and their passwords. The passwords are saved readable in the backup folder (an encrypted one only works on the Windows that saved it): keep the folder safe and delete it when you no longer need it.
+   - **BitLocker recovery key**: only shown when a drive is encrypted, which Windows 11 often does by itself. After a BIOS update, a new motherboard or another hardware change, Windows can ask for this 48-digit key, and without it the drive can't be opened. Each drive you check gets a text file with its key and how to use it. Nothing on the PC changes: encryption is not turned on or off. Anyone with the key can read the drive, so keep the backup safe. Picking a place on the encrypted drive itself (Desktop, Documents...) shows a warning, since the key would be locked in with it: use a USB drive or print the file. If you sign in with a Microsoft account, Windows may also keep the key at [aka.ms/myrecoverykey](https://aka.ms/myrecoverykey).
 
 Everything goes in one folder:
 
@@ -19,6 +20,7 @@ tidywin-backup-<PC>-<date>\
     drivers\      one folder per driver, drivers.json and a README.txt for installing by hand
     apps.json     the WinGet list (apps-names.json: their names, for Restore)
     wifi\         one .xml per network
+    bitlocker\    one .txt per drive, with its recovery key
 ```
 
 Your own files (Documents, Pictures, Desktop...) are not saved: copy them yourself.
@@ -37,4 +39,7 @@ From a local copy, each part runs on its own with `-Export` (back up) or `-Impor
 .\scripts\drivers\backup-drivers.ps1 -Export
 .\scripts\apps\backup-apps.ps1 -Export
 .\scripts\windows\backup-wifi.ps1 -Export
+.\scripts\windows\backup-bitlocker.ps1 -Export
 ```
+
+The BitLocker key has nothing to restore: when Windows asks for it, open the file in the `bitlocker` folder of the backup.

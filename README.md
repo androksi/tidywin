@@ -41,15 +41,15 @@ It asks for administrator rights and opens the TidyWin window. Pick a page in th
 | | Pages | |
 |:---|:---|:---|
 | **Set up** | Windows · Updates · Apps · Fonts · Browsers | Privacy, appearance, File Explorer, power and network; how Windows Update works; 106 apps and 19 fonts from their official sources; a more private Chrome, Brave and Firefox |
-| **Maintenance** | Remove apps · Disk space · Fix Windows · Internet connection · Firewall | Official uninstallers plus leftovers, temporary files, DISM and `sfc`, network resets that keep your DNS, the firewall rules your apps added |
-| **Back up** | Create · Restore | Drivers, apps and Wi-Fi networks in one folder, before and after formatting |
+| **Maintenance** | Remove apps · Startup apps · Disk space · Fix Windows · Internet connection · Firewall | Official uninstallers plus leftovers, what starts with Windows, temporary files, DISM and `sfc`, network resets that keep your DNS, the firewall rules your apps added |
+| **Back up** | Create · Restore | Drivers, apps, Wi-Fi networks and the BitLocker key in one folder, before and after formatting |
 | **Undo** | Windows · Browsers · Fonts | Put back what TidyWin changed, one item at a time |
 
 </div>
 
 <div align="center">
 
-[Windows](docs/windows.md) · [Updates](docs/windows.md#updates) · [Firewall](docs/windows.md#firewall) · [Apps](docs/apps.md) · [Fonts](docs/fonts.md) · [Browsers](docs/browsers.md) · [Back up](docs/backup.md) · [Drivers](docs/drivers.md) · [Reinstalling Windows](docs/reinstall.md)
+[Windows](docs/windows.md) · [Updates](docs/windows.md#updates) · [Startup apps](docs/windows.md#startup-apps) · [Firewall](docs/windows.md#firewall) · [Apps](docs/apps.md) · [Fonts](docs/fonts.md) · [Browsers](docs/browsers.md) · [Back up](docs/backup.md) · [Drivers](docs/drivers.md) · [Reinstalling Windows](docs/reinstall.md)
 
 </div>
 

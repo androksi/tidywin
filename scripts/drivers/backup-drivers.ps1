@@ -192,7 +192,7 @@ if ($PSVersionTable.PSEdition -ne 'Desktop') {
 
 #region ==================== BACKUP FOLDER ====================
 
-# The same in the three backup scripts (drivers, apps, Wi-Fi): each saves its part in one
+# The same in the backup scripts (drivers, apps, Wi-Fi, BitLocker key): each saves its part in one
 # tidywin-backup-<PC>-<date> folder, and Restore finds that folder again. The panel's pages run them
 # together and show the shared fields (where to save, which backup) once.
 
@@ -253,6 +253,7 @@ function Get-BackupContents([string]$Root) {
     if (Test-Path -LiteralPath (Join-Path $Root 'drivers\drivers.json')) { $parts += 'drivers' }
     if (Test-Path -LiteralPath (Join-Path $Root 'apps.json')) { $parts += 'apps' }
     if (@(Get-ChildItem -LiteralPath (Join-Path $Root 'wifi') -Filter '*.xml' -File -ErrorAction SilentlyContinue).Count) { $parts += 'Wi-Fi' }
+    if (@(Get-ChildItem -LiteralPath (Join-Path $Root 'bitlocker') -Filter '*.txt' -File -ErrorAction SilentlyContinue).Count) { $parts += 'BitLocker key' }
     if ($parts) { $parts -join ', ' } else { 'empty' }
 }
 

@@ -34,6 +34,7 @@ Every option shows on one page, in tabs. **Nothing comes selected**: only what y
 | Device apps | Doesn't download manufacturer apps and icons when devices are connected (drivers still come). |
 | WPBT | Stops Windows from running programs the motherboard firmware provides at boot (how Armoury Crate, Vantage and similar install themselves). A Windows registry setting only: the BIOS is not changed, and a fresh install allows it again. To stop it for good, turn off the matching BIOS option (e.g. ASUS "Armoury Crate", Lenovo "Vantage"). Some anti-theft software (Computrace) uses WPBT too. |
 | Hide areas | Hides "Account protection" and "Device security" in Windows Security (Microsoft account nags). |
+| No Store apps in the background | Apps from the Microsoft Store stop running after you close them (policy `LetAppsRunInBackground` = Force Deny), which saves battery and data. Programs installed from a website are not affected. Store apps like WhatsApp, Phone Link and Teams only show notifications while they are open; the page warns about it. |
 
 ## Personalization
 | Feature | What it does |
@@ -41,6 +42,10 @@ Every option shows on one page, in tabs. **Nothing comes selected**: only what y
 | Theme | Light or dark. Turns off Windows Spotlight and applies the theme's wallpaper. |
 | Screen | For each monitor: resolution, refresh rate and scale, from the ones the monitor supports, with the recommended and current ones marked. Nothing picked: nothing changes. After a resolution or refresh change, Enter keeps it; otherwise it goes back by itself in 15 seconds. |
 | Taskbar | Icons centered or on the left. |
+| Combine taskbar buttons | Always (the Windows default), when the taskbar is full, or never: each window gets its own button with its name. The page shows the current choice. Windows 10, and Windows 11 23H2 or newer. Applies to every screen. |
+| Desktop icons | Check which to show: This PC, your user folder, Recycle Bin, Network, Control Panel. The ones already on the Desktop say so, and unchecked ones stay as they are. The icons TidyWin turned on are listed in `%ProgramData%\TidyWin\desktop-icons.json`, so Undo hides only those. |
+| No transparency | Start, the taskbar and some windows become solid instead of see-through. |
+| No animations | Windows open, close, minimize and maximize at once, without fading or sliding, and the taskbar stops animating. The same switch as Settings → Accessibility → Visual effects → Animation effects. |
 | Search | Hidden, icon only or search box. |
 | Task View | Show or hide the button. |
 | No pins | Removes every pinned icon from the taskbar. |
@@ -58,6 +63,8 @@ Every option shows on one page, in tabs. **Nothing comes selected**: only what y
 ## System
 | Feature | What it does |
 |---|---|
+| Rename this PC | Shows the current name (a new install gets one like `DESKTOP-7F3K2QJ`) and takes a new one: up to 15 letters, numbers and hyphens, checked as you type. It is the name other devices see on the network and in Bluetooth. Takes effect after restarting. The first name TidyWin replaced is saved to `%ProgramData%\TidyWin\pc-name.json`, and Undo gives it back. Hidden on PCs in a company domain. |
+| Storage Sense | Turns on Storage Sense: once a month Windows deletes temporary files apps don't use and files that have been in the Recycle Bin for more than 30 days (those are deleted for good, the page warns). The Downloads folder and OneDrive files are never touched. Already on: the page says so and nothing changes, so your own choices stay. Turned off by a policy: the page says so. |
 | Long paths | Allows paths longer than 260 characters. |
 | End task | Adds "End task" when right-clicking an app on the taskbar. |
 | Win+V history | Turns on clipboard history. |
@@ -69,6 +76,7 @@ Every option shows on one page, in tabs. **Nothing comes selected**: only what y
 ## Power
 | Feature | What it does |
 |---|---|
+| Power mode | Windows 11: best power efficiency, balanced or best performance, like Settings → System → Power. Best performance makes the PC faster and the fans louder (and the battery last less). Windows keeps one mode for plugged in and one for battery, and only lets programs change the one in use now: on a laptop, the other one says to plug in or unplug the charger and open the page again. Only offered with the Balanced power plan, the one Windows uses by default. |
 | No hibernation | Only shown when hibernation is on. Turns it off with `powercfg /hibernate off`: `hiberfil.sys` is deleted (often several GB on C:), and Fast Startup and the Hibernate option go away too. Sleep keeps working. On laptops, an empty battery shuts the PC down instead of hibernating. While it is on, the hibernation times are hidden. |
 | Screen, sleep and hibernation | Choose when to turn off the screen, sleep and hibernate, plugged in and (laptops) on battery, from 1 minute to never. Each one shows the current value; the ones you leave empty stay as they are. Hibernation is only asked if it is turned on. Applies to the active power plan, like Settings → System → Power. |
 
@@ -106,6 +114,23 @@ The page shows how Windows Update is set up now and three modes, nothing picked:
 | Off | **Not safe**, shown in red on the page. Sets the `NoAutoUpdate` policy and disables and stops the Windows Update, Update Orchestrator and Windows Update Medic services (Windows may protect the last one). Their startup types are saved first to `%ProgramData%\TidyWin\updates.json`, and Normal puts them back. Microsoft Store downloads can fail while it is off. |
 
 Apart from the mode, **Drivers** picks where drivers come from. **Not from Windows Update** sets the `ExcludeWUDriversInQualityUpdate` policy (Pro, Enterprise and Education), so Windows stops replacing the drivers you installed, like the video card one. Windows and security updates keep coming, and you update the drivers from the manufacturer. **From Windows Update** removes the policy. Normal leaves this as it is.
+
+## Startup apps
+
+In the [TidyWin panel](../README.md#quick-start): **Maintenance → Startup apps**. From a local copy:
+
+```powershell
+.\scripts\windows\manage-startup.ps1
+```
+
+Lists the programs that start by themselves when you sign in: the `Run` keys of the registry and the Startup folders, yours and the ones for everyone on the PC. Nothing comes checked.
+
+| List | What it does |
+|---|---|
+| Don't start with Windows | The programs that start now, with their maker. The checked ones stop starting by themselves. They stay installed and open normally when you open them. An ⓘ shows exactly what starts. Rows that come with a driver (Realtek, Synaptics, NVIDIA...) warn that extras like touchpad gestures or audio effects can stop; rows from Windows warn too; a program no longer on the PC says so. |
+| Start with Windows again | The ones turned off, here or in Task Manager, with the date. The checked ones start again. This is the undo. |
+
+It is the same switch as Task Manager → Startup apps (the `StartupApproved` key), so both always agree. Nothing is deleted. Windows Security's icon is not listed (TidyWin never touches Defender), and Microsoft Store apps have their own switches in Settings → Apps → Startup. Some programs turn this back on when they update. Takes effect at the next sign-in.
 
 ## Cleanup
 
@@ -180,5 +205,5 @@ In the [TidyWin panel](../README.md#quick-start): **Undo → Windows**. From a l
 
 | Feature | What it does |
 |---|---|
-| Revert | A page with one switch per subject, all off: only what you turn on is undone. Covers telemetry, policies, suggestions, border, Snap windows, DNS, Game DVR, the Print Screen key, the Start ad shortcuts (when the app is installed), Recall, the AI features, Edge (including the shortcut policy), Windows Security areas, WPBT, hibernation (when it is off), Fast Startup, Num Lock, Home/Gallery, Music in Quick access, classic right-click menu, folder discovery, the "new app installed" prompt, devices, blue screen, `inetpub` and update sharing. |
-| Not reverted | Removed apps (Xbox and Snipping Tool included; reinstall from the Microsoft Store), OneDrive, screen resolution, refresh rate and scale, screen and sleep times, theme, taskbar, extensions, hidden files and battery (undo through Settings). |
+| Revert | A page with one switch per subject, all off: only what you turn on is undone. Covers telemetry, policies, suggestions, border, Snap windows, DNS, Game DVR, the Print Screen key, the Start ad shortcuts (when the app is installed), Recall, the AI features, Edge (including the shortcut policy), Windows Security areas, WPBT, hibernation (when it is off), Fast Startup, Num Lock, Home/Gallery, Music in Quick access, classic right-click menu, folder discovery, the "new app installed" prompt, devices, blue screen, `inetpub`, update sharing, Store apps in the background, transparency, animations, and, when TidyWin changed them, the Desktop icons it added, Storage Sense and the old PC name. |
+| Not reverted | Removed apps (Xbox and Snipping Tool included; reinstall from the Microsoft Store), OneDrive, screen resolution, refresh rate and scale, screen and sleep times, power mode, theme, taskbar (alignment and combining), extensions, hidden files and battery (undo through Settings, or pick them again on the Windows page). |

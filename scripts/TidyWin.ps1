@@ -105,6 +105,12 @@ function Get-Menu {
             'Deletes only what you confirm: folders go to the Recycle Bin and registry keys are backed up.'
         ) 'Uninstall' @(New-Step 'apps/uninstall-apps.ps1') -Form
 
+        New-MenuEntry $care 'startup' 'E945' 'Startup apps' 'Startup apps' 'Choose which programs start by themselves with Windows.' @(
+            'Lists what opens by itself when you sign in.'
+            'Turns off the ones you pick, the same way Task Manager does.'
+            'Nothing is uninstalled, and any of them can be turned back on.'
+        ) 'Review' @(New-Step 'windows/manage-startup.ps1') -Form
+
         New-MenuEntry $care 'cleanup' 'EDA2' 'Disk space' 'Disk space' 'Delete files Windows doesn''t need.' @(
             'Temporary files, old update downloads, error reports and more.'
             'Shows the size of each and asks before deleting it.'
@@ -130,9 +136,9 @@ function Get-Menu {
 
         # Before formatting and after: drivers, apps and Wi-Fi in one tidywin-backup folder. Restore goes
         # drivers first (the Wi-Fi adapter may need one), then Wi-Fi, then the apps, which need the internet.
-        New-MenuEntry $backup 'backup' 'E74E' 'Create' 'Create' 'Save your drivers, apps and Wi-Fi networks before formatting.' @(
+        New-MenuEntry $backup 'backup' 'E74E' 'Create' 'Create' 'Save your drivers, apps, Wi-Fi networks and BitLocker key before formatting.' @(
             'Pick what to save and where: a USB drive or another disk.'
-        ) 'Create' @((New-Step 'drivers/backup-drivers.ps1' '-Export' 'Drivers'), (New-Step 'apps/backup-apps.ps1' '-Export' 'Apps'), (New-Step 'windows/backup-wifi.ps1' '-Export' 'Wi-Fi')) -Form
+        ) 'Create' @((New-Step 'drivers/backup-drivers.ps1' '-Export' 'Drivers'), (New-Step 'apps/backup-apps.ps1' '-Export' 'Apps'), (New-Step 'windows/backup-wifi.ps1' '-Export' 'Wi-Fi'), (New-Step 'windows/backup-bitlocker.ps1' '-Export' 'BitLocker key')) -Form
 
         New-MenuEntry $backup 'restore' 'E896' 'Restore' 'Restore' 'Put your drivers, Wi-Fi networks and apps back after formatting.' @(
             'Finds the backup on your drives by itself.'
@@ -1948,7 +1954,7 @@ function New-FieldRow($Form, $F) {
             $control.Children.Add($box) | Out-Null
             $control.Children.Add($hint) | Out-Null
             $info.Box = $box
-            $err = New-Text 'Not a valid address' 12 'Normal' 'Err'
+            $err = New-Text $(if ($F.invalid) { "$($F.invalid)" } else { 'Not a valid address' }) 12 'Normal' 'Err'
             $err.Margin = New-Object Windows.Thickness 0, 2, 0, 0
             $err.Visibility = 'Collapsed'
             $text.Children.Add($err) | Out-Null
@@ -2078,6 +2084,8 @@ function Test-FieldValid($Form, $Field) {
     if (-not $v) { return [bool]$Field.optional }
     # An https:// address (DNS over HTTPS); the same pattern as configure-windows.ps1
     if ($Field.validate -eq 'url') { return $v -match '^https://[^\s/:]+\.[^\s/:]+(:\d+)?(/\S*)?$' }
+    # A PC name: up to 15 letters, numbers and hyphens, not only numbers; the same pattern as configure-windows.ps1
+    if ($Field.validate -eq 'pcname') { return $v -match '^(?![0-9]+$)(?!-)[A-Za-z0-9-]{1,15}(?<!-)$' }
     $ip = $null
     if (-not [Net.IPAddress]::TryParse($v, [ref]$ip)) { return $false }
     if ($Field.validate -eq 'ipv4') { return $ip.AddressFamily -eq 'InterNetwork' -and $v -match '^\d{1,3}(\.\d{1,3}){3}$' }

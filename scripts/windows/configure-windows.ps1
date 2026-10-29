@@ -18,9 +18,9 @@
     FILE LAYOUT
         1. Helpers ................... registry, prompts, steps
         2. System detection .......... Windows version and available features
-        3. Privacy and cleanup ....... telemetry, suggestions, apps, OneDrive, Edge, Windows Security, C:\ root folders, device apps
-        4. Personalization ........... theme, taskbar (alignment, search, Task View, pins, battery %), File Explorer (hidden files, folder discovery, Home/Gallery), window border
-        5. System .................... long paths, End task, sudo, Win+V, mouse, Sticky Keys, verbose BSoD, screen/sleep times
+        3. Privacy and cleanup ....... telemetry, suggestions, apps, OneDrive, Edge, Windows Security, C:\ root folders, device apps, Store apps in the background
+        4. Personalization ........... theme, desktop icons, taskbar (alignment, combine, search, Task View, pins, battery %), File Explorer (hidden files, folder discovery, Home/Gallery), window border, transparency, animations
+        5. System .................... PC name, Storage Sense, long paths, End task, sudo, Win+V, mouse, Sticky Keys, verbose BSoD, power mode, screen/sleep times
         6. Network ................... DNS with DNS over HTTPS
         7. Options ................... every option (the panel's page) and what you chose
         8. Execution ................. applies the chosen options, in order
@@ -440,6 +440,9 @@ $hasBattery = [bool](Get-CimInstance Win32_Battery -ErrorAction SilentlyContinue
 
 # Local account (not a Microsoft account)? Sets the default of the Windows Security areas question.
 $isLocalAccount = (Get-LocalUser -Name $env:USERNAME -ErrorAction SilentlyContinue).PrincipalSource -eq 'Local'
+
+# In a company domain the PC name is the domain's to change, so the rename option doesn't show.
+$inDomain = [bool](Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue).PartOfDomain
 
 # Base key for Windows policies (used in several sections)
 $P = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows'
@@ -906,6 +909,12 @@ function Disable-AiFeatures([string[]]$Ids) {
 # WPBT (Windows Platform Binary Table): lets the PC's firmware hand Windows a program to run at every
 # boot. Manufacturers use it to reinstall their apps (Armoury Crate, Vantage...) even after a clean install.
 # This stops Windows from running it; the firmware itself is not touched.
+# Apps from the Microsoft Store stop running after you close them (policy LetAppsRunInBackground
+# 2 = "Force Deny"). Desktop programs are not affected. Their notifications come only while they are open.
+function Disable-BackgroundApps {
+    Set-Option 'Store apps in the background' 'off' (RegValue "$P\AppPrivacy" 'LetAppsRunInBackground' 2)
+}
+
 function Disable-Wpbt {
     Set-Reg 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' 'DisableWpbtExecution' 1
     Write-Done 'WPBT: Windows no longer runs programs provided by the firmware'; Write-Host '  After restarting.' -ForegroundColor DarkGray
@@ -1081,6 +1090,93 @@ function Disable-NewAppAlert {
 
 # Battery percentage next to the taskbar battery icon (Windows 11 24H2/25H2, builds from late 2025 on).
 # On older builds the value is simply ignored.
+# --- Desktop icons (Settings → Personalization → Themes → Desktop icon settings) ---
+# Under HideDesktopIcons\NewStartPanel a value of 0 shows the icon and 1 hides it. Without a value only the
+# Recycle Bin shows. The icons TidyWin turned on are saved, so Undo hides only those.
+$DesktopIconsKey  = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel'
+$DesktopIconsFile = Join-Path $env:ProgramData 'TidyWin\desktop-icons.json'
+$DesktopIcons = [ordered]@{
+    '{20D04FE0-3AEA-1069-A2D8-08002B30309D}' = @{ Label = 'This PC';          Note = 'Your drives';                                  Shown = $false }
+    '{59031a47-3f72-44a7-89c5-5595fe6b30ee}' = @{ Label = 'Your user folder'; Note = 'Documents, Downloads, Pictures and the rest'; Shown = $false }
+    '{645FF040-5081-101B-9F08-00AA002F954E}' = @{ Label = 'Recycle Bin';      Note = '';                                             Shown = $true  }
+    '{F02C1A0D-BE21-4350-88B0-7367FC96EF3C}' = @{ Label = 'Network';          Note = 'Other PCs and devices on your network';        Shown = $false }
+    '{5399E694-6CE5-4D6C-8FCE-1D8870FDCBA0}' = @{ Label = 'Control Panel';    Note = '';                                             Shown = $false }
+}
+
+function Test-DesktopIconShown([string]$Clsid) {
+    $value = Get-RegValue $DesktopIconsKey $Clsid
+    if ($null -eq $value) { return $DesktopIcons[$Clsid].Shown }
+    return $value -eq 0
+}
+
+function Show-DesktopIcons([string[]]$Clsids) {
+    $mine = @(if (Test-Path $DesktopIconsFile) { try { Get-Content $DesktopIconsFile -Raw | ConvertFrom-Json } catch { } })
+    foreach ($c in $Clsids) {
+        $shown = Test-DesktopIconShown $c
+        if (-not $shown) {
+            Set-Reg $DesktopIconsKey $c 0
+            if ($mine -notcontains $c) { $mine += $c }
+        }
+        Write-Change "Desktop icon $($DesktopIcons[$c].Label)" 'shown' (-not $shown)
+    }
+    New-Item -ItemType Directory -Path (Split-Path $DesktopIconsFile) -Force | Out-Null
+    ConvertTo-Json -InputObject @($mine) | Set-Content $DesktopIconsFile -Encoding UTF8
+    $script:RestartExplorer = $true
+}
+
+# Buttons of the same app on the taskbar: TaskbarGlomLevel 0 = always combined, without labels (the Windows
+# default), 1 = combined only when the taskbar is full, 2 = never. MMTaskbarGlomLevel: the other screens.
+function Get-TaskbarCombine { $level = Get-RegValue $ADV 'TaskbarGlomLevel'; if ($null -eq $level) { 0 } else { [int]$level } }
+function Set-TaskbarCombine([int]$Level) {
+    $state = @('always', 'when the taskbar is full', 'never')[$Level]
+    Set-Option 'Combine taskbar buttons' $state (RegValue $ADV 'TaskbarGlomLevel' $Level), (RegValue $ADV 'MMTaskbarGlomLevel' $Level)
+    $script:RestartExplorer = $true
+}
+
+# Transparency effects (Settings → Personalization → Colors): Start, the taskbar and some windows become solid.
+$PersonalizeKey = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize'
+function Disable-Transparency {
+    Set-Option 'Transparency effects' 'off' (RegValue $PersonalizeKey 'EnableTransparency' 0)
+    $script:RestartExplorer = $true
+}
+
+# SystemParametersInfo, the Windows call Settings uses for Snap windows and Animation effects.
+function Initialize-Spi {
+    if ('CfgWin.Snap' -as [type]) { return }
+    Add-Type -Namespace CfgWin -Name Snap -MemberDefinition @'
+[DllImport("user32.dll", SetLastError = true)]
+public static extern bool SystemParametersInfo(uint uiAction, uint uiParam, System.IntPtr pvParam, uint fWinIni);
+'@
+}
+
+# Animation effects (Settings → Accessibility → Visual effects): windows open, close, minimize and
+# maximize at once, and the taskbar stops sliding. SPI_GETCLIENTAREAANIMATION = 0x1042.
+function Test-AnimationsOn {
+    Initialize-Spi
+    $buffer = [Runtime.InteropServices.Marshal]::AllocHGlobal(4)
+    try {
+        [Runtime.InteropServices.Marshal]::WriteInt32($buffer, 1)
+        [void][CfgWin.Snap]::SystemParametersInfo(0x1042, 0, $buffer, 0)
+        return [Runtime.InteropServices.Marshal]::ReadInt32($buffer) -ne 0
+    } finally { [Runtime.InteropServices.Marshal]::FreeHGlobal($buffer) }
+}
+
+# SPI_SETCLIENTAREAANIMATION = 0x1043 (the Settings switch); SPI_SETANIMATION = 0x0049 with an ANIMATIONINFO
+# (cbSize 8, iMinAnimate): minimize and maximize. SPIF_UPDATEINIFILE | SPIF_SENDCHANGE = 3: saved and applied now.
+function Disable-Animations {
+    $wasOn = Test-AnimationsOn
+    if (-not [CfgWin.Snap]::SystemParametersInfo(0x1043, 0, [IntPtr]::Zero, 3)) { throw 'Windows did not accept the change' }
+    $info = [Runtime.InteropServices.Marshal]::AllocHGlobal(8)
+    try {
+        [Runtime.InteropServices.Marshal]::WriteInt32($info, 0, 8)
+        [Runtime.InteropServices.Marshal]::WriteInt32($info, 4, 0)
+        [void][CfgWin.Snap]::SystemParametersInfo(0x0049, 8, $info, 3)
+    } finally { [Runtime.InteropServices.Marshal]::FreeHGlobal($info) }
+    Set-Reg $ADV 'TaskbarAnimations' 0
+    Write-Change 'Animation effects' 'off' $wasOn
+    $script:RestartExplorer = $true
+}
+
 function Enable-BatteryPercentage {
     Set-Reg 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'IsBatteryPercentageEnabled' 1
     Write-Done 'Battery percentage on the taskbar: on'; Write-Host '  If your Windows version has the option.' -ForegroundColor DarkGray
@@ -1098,12 +1194,7 @@ function Set-ThinBorder {
 # Saved in the registry and applied right away through the same Windows call Settings uses.
 function Disable-SnapWindows {
     Set-Reg 'HKCU:\Control Panel\Desktop' 'WindowArrangementActive' '0' 'String'
-    if (-not ('CfgWin.Snap' -as [type])) {
-        Add-Type -Namespace CfgWin -Name Snap -MemberDefinition @'
-[DllImport("user32.dll", SetLastError = true)]
-public static extern bool SystemParametersInfo(uint uiAction, uint uiParam, System.IntPtr pvParam, uint fWinIni);
-'@
-    }
+    Initialize-Spi
     # SPI_SETWINARRANGEMENT = 0x0083; SPIF_UPDATEINIFILE | SPIF_SENDCHANGE = 3
     [void][CfgWin.Snap]::SystemParametersInfo(0x0083, 0, [IntPtr]::Zero, 3)
     Write-Done 'Snap windows: off'
@@ -1495,6 +1586,59 @@ function Enable-VerboseBsod {
     Write-Done 'Detailed blue screen: on'; Write-Host '  Only shows up if the PC crashes.' -ForegroundColor DarkGray
 }
 
+# --- PC name ----------------------------------------------------------------
+# The name other devices see on the network and in Bluetooth, and that your Microsoft account lists.
+# Windows uses a new name after a restart. The name TidyWin replaced first is saved, so Undo gives it back.
+$PcNameFile = Join-Path $env:ProgramData 'TidyWin\pc-name.json'
+# Up to 15 letters, numbers and hyphens, not only numbers, no hyphen at either end. The panel checks the same.
+$PcNamePattern = '^(?![0-9]+$)(?!-)[A-Za-z0-9-]{1,15}(?<!-)$'
+
+# The name now, and the one waiting for a restart ($null when there is none).
+function Get-PcNames {
+    $key = 'HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName'
+    $now  = "$(Get-RegValue "$key\ActiveComputerName" 'ComputerName')"
+    $next = "$(Get-RegValue "$key\ComputerName" 'ComputerName')"
+    if (-not $now) { $now = $env:COMPUTERNAME }
+    [pscustomobject]@{ Now = $now; Pending = $(if ($next -and $next -ne $now) { $next } else { $null }) }
+}
+
+function Rename-ThisPC([string]$Name) {
+    $names = Get-PcNames
+    $current = if ($names.Pending) { $names.Pending } else { $names.Now }
+    if ($Name -ceq $current) { Write-Skip "This PC is already called $Name"; return }
+    Rename-Computer -NewName $Name -Force -WarningAction SilentlyContinue -ErrorAction Stop
+    if (-not (Test-Path $PcNameFile)) {
+        New-Item -ItemType Directory -Path (Split-Path $PcNameFile) -Force | Out-Null
+        ConvertTo-Json @{ name = $names.Now; date = (Get-Date -Format 'yyyy-MM-dd') } | Set-Content $PcNameFile -Encoding UTF8
+    }
+    # Not the names themselves: this line goes to the log file, which has no user or PC name
+    Write-Done 'PC name: changed'
+    Write-Host '  Takes effect after restarting the PC. Undo gives the old name back.' -ForegroundColor DarkGray
+}
+
+# --- Storage Sense (Settings → System → Storage) -----------------------------
+# Windows cleans up by itself once a month: temporary files apps don't use, and what has been in the
+# Recycle Bin for more than 30 days. The Downloads folder and OneDrive files are never touched.
+# Values of StoragePolicy: 01 on, 2048 how often (days), 04 temporary files, 08 + 256 Recycle Bin and
+# its days, 32 + 512 Downloads and its days (0 = never).
+# Already on: left as it is, with the person's own choices. Turned on by TidyWin: saved, so Undo turns
+# off only that.
+$StoragePolicyKey = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\StorageSense\Parameters\StoragePolicy'
+$StorageSenseFile = Join-Path $env:ProgramData 'TidyWin\storage-sense.json'
+function Test-StorageSenseOn { (Get-RegValue $StoragePolicyKey '01') -eq 1 }
+function Test-StorageSenseBlocked { (Get-RegValue "$P\StorageSense" 'AllowStorageSenseGlobal') -eq 0 }
+
+function Enable-StorageSense {
+    if (Test-StorageSenseOn) { Write-Skip 'Storage Sense was already on. Your own choices for it stay.'; return }
+    foreach ($pair in @(@('01', 1), @('2048', 30), @('04', 1), @('08', 1), @('256', 30), @('32', 0), @('512', 0))) {
+        Set-Reg $StoragePolicyKey $pair[0] $pair[1]
+    }
+    New-Item -ItemType Directory -Path (Split-Path $StorageSenseFile) -Force | Out-Null
+    ConvertTo-Json @{ date = (Get-Date -Format 'yyyy-MM-dd') } | Set-Content $StorageSenseFile -Encoding UTF8
+    Write-Done 'Storage Sense: on, once a month'
+    Write-Host '  Deletes temporary files and what has been in the Recycle Bin for 30 days. Downloads is never touched.' -ForegroundColor DarkGray
+}
+
 # --- Power: screen and sleep times ------------------------------------------
 # Same as Settings → System → Power, in the active power plan. Minutes; 0 = never.
 # AC = plugged in, DC = on battery.
@@ -1522,6 +1666,49 @@ function Format-Minutes([int]$Minutes) {
     if ($Minutes -eq 0) { return 'never' }
     if ($Minutes % 60 -eq 0) { $h = $Minutes / 60; return "$h hour$(if ($h -gt 1) { 's' })" }
     return "$Minutes min"
+}
+
+# Power mode (Settings → System → Power): best power efficiency, balanced or best performance, on top of
+# the Balanced plan (Windows offers it only while that plan is active). Windows keeps one mode for plugged
+# in and one for battery, and only lets a program change the one in use now (the registry key is read-only,
+# even for administrators), so a laptop picks the other one after switching power.
+$BalancedPlan = '381b4222-f694-41f0-9685-ff5bb260df2e'
+$PowerModeIds = [ordered]@{
+    'Efficiency'  = '961cc777-2547-4f9d-8174-7d86181b8a7a'
+    'Balanced'    = '00000000-0000-0000-0000-000000000000'
+    'Performance' = 'ded574b5-45a0-4f42-8737-46345c09c238'
+}
+$PowerModeNames = @{ Efficiency = 'Best power efficiency'; Balanced = 'Balanced'; Performance = 'Best performance' }
+
+function Initialize-PowerApi {
+    if ('CfgWin.Power' -as [type]) { return }
+    Add-Type -Namespace CfgWin -Name Power -MemberDefinition @'
+[DllImport("powrprof.dll")]
+public static extern uint PowerSetActiveOverlayScheme(System.Guid overlay);
+'@
+}
+
+# The mode of each power source, as an id of $PowerModeIds ('' when Windows has one TidyWin doesn't know).
+function Get-PowerMode([bool]$Battery) {
+    $name = if ($Battery) { 'ActiveOverlayDcPowerScheme' } else { 'ActiveOverlayAcPowerScheme' }
+    $guid = "$(Get-RegValue 'HKLM:\SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes' $name)".ToLower()
+    if (-not $guid) { $guid = $PowerModeIds['Balanced'] }
+    foreach ($id in $PowerModeIds.Keys) { if ($PowerModeIds[$id] -eq $guid) { return $id } }
+    return ''
+}
+
+function Test-OnBattery {
+    Add-Type -AssemblyName System.Windows.Forms
+    [Windows.Forms.SystemInformation]::PowerStatus.PowerLineStatus -eq 'Offline'
+}
+
+function Set-PowerMode([string]$Id) {
+    $battery = Test-OnBattery
+    if ((Get-PowerMode $battery) -eq $Id) { Write-Skip "Power mode: $($PowerModeNames[$Id]) (already)"; return }
+    Initialize-PowerApi
+    $result = [CfgWin.Power]::PowerSetActiveOverlayScheme([guid]$PowerModeIds[$Id])
+    if ($result -ne 0) { throw "Windows did not accept the power mode (code $result)" }
+    Write-Done "Power mode $(if ($hasBattery) { if ($battery) { 'on battery' } else { 'plugged in' } }): $($PowerModeNames[$Id])"
 }
 
 # $Values: "powercfg /change" names (monitor-timeout-ac, standby-timeout-dc...) -> minutes.
@@ -1626,6 +1813,7 @@ $themeIds    = @('Keep', 'Light', 'Dark');          $themeNames    = @('Default'
 $taskbarIds  = @('Keep', 'Center', 'Left');         $taskbarNames  = @('Default', 'Center', 'Left')
 $searchIds   = @('Keep', 'Hidden', 'Icon', 'Box');  $searchNames   = @('Default', 'Hidden', 'Icon only', 'Search box')
 $taskViewIds = @('Keep', 'Show', 'Hide');           $taskViewNames = @('Default', 'Show', 'Hide')
+$combineIds  = @('Keep', 'Always', 'WhenFull', 'Never'); $combineNames = @('Default', 'Always', 'When the taskbar is full', 'Never')   # index - 1 = TaskbarGlomLevel
 function Get-ChoiceOptions([string[]]$Ids, [string[]]$Names) { @(for ($i = 1; $i -lt $Ids.Count; $i++) { Opt $Ids[$i] $Names[$i] }) }   # without "Keep"
 
 # Preinstalled apps on this PC (see Get-AppCatalog); in the list by their first package name
@@ -1754,6 +1942,22 @@ Write-Loading 'Reading the power settings' 65
 $canHibernate = Test-HibernateEnabled
 $powerModes = @(@{ Key = 'ac'; Battery = $false; Label = 'Plugged in' })
 if ($hasBattery) { $powerModes += @{ Key = 'dc'; Battery = $true; Label = 'On battery' } }
+# Power mode: Windows 11 with the Balanced plan; only the power source in use now can be changed
+$onBattery = $hasBattery -and (Test-OnBattery)
+$activePlan = "$(Get-RegValue 'HKLM:\SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes' 'ActivePowerScheme')".ToLower()
+$hasPowerMode = $isWin11 -and $activePlan -eq $BalancedPlan
+
+# The power mode of one power source: a select for the one in use now, a line for the other one.
+function Get-PowerModeField($Mode) {
+    if ($Mode.Battery -ne $onBattery) {
+        $other = if ($Mode.Battery) { 'unplug the charger' } else { 'plug in the charger' }
+        $then = Get-PowerMode $Mode.Battery
+        return New-Field 'Power' "PowerModeOther-$($Mode.Key)" 'info' 'Power mode' "Now: $(if ($then) { $PowerModeNames[$then] } else { 'set by the PC maker' }). Windows only lets this change while it is in use: $other and open this page again."
+    }
+    $now = Get-PowerMode $Mode.Battery
+    $options = @($PowerModeIds.Keys | ForEach-Object { Opt $_ ($PowerModeNames[$_] + $(if ($_ -eq $now) { ' · current' } else { '' })) })
+    New-Field 'Power' "PowerMode-$($Mode.Key)" 'select' 'Power mode' "Now: $(if ($now) { $PowerModeNames[$now] } else { 'set by the PC maker' }). Best performance makes the PC faster and the fans louder$(if ($Mode.Battery) { ', and the battery runs out sooner' })." '' @{ options = $options }
+}
 
 function Get-PowerFields {
     # Only when hibernation is on; while this is on, the "Hibernate after" times hide
@@ -1762,8 +1966,12 @@ function Get-PowerFields {
         New-Field 'Power' 'NoHibernate' 'toggle' 'Turn off hibernation' 'Frees the space hiberfil.sys takes on drive C:, often several GB. Fast Startup and the Hibernate option go away too; sleep keeps working.' $false @{ warn = $warn }
     }
     $hibernateShown = @{ field = 'NoHibernate'; is = 'False' }
+    if ($isWin11 -and -not $hasPowerMode) {
+        New-Field 'Power' 'PowerModeNone' 'info' 'Power mode' 'Your power plan is not Balanced, so Windows doesn''t offer power modes. Choose Balanced in Control Panel → Power Options to get them.' $null
+    }
     foreach ($m in $powerModes) {
         if ($hasBattery) { New-Field 'Power' "power-$($m.Key)" 'header' $m.Label '' $null }
+        if ($hasPowerMode) { Get-PowerModeField $m }
         $cur = Get-PowerTimeout SUB_VIDEO VIDEOIDLE $m.Battery
         New-Field 'Power' "monitor-timeout-$($m.Key)" 'select' 'Turn off the screen after' "Now: $(Format-Minutes $cur)" '' @{ options = (Get-MinuteOptions $ScreenChoices $cur) }
         $cur = Get-PowerTimeout SUB_SLEEP STANDBYIDLE $m.Battery
@@ -1796,6 +2004,10 @@ function Get-Fields {
     New-Field $T 'Security' 'toggle' 'Block unwanted apps' 'Windows Security blocks potentially unwanted apps and downloads, like installers that bundle extras, and shows fewer minor notices.' $false
     New-Field $T 'HideAreas' 'toggle' 'Hide account areas in Windows Security' '"Account protection" and "Device security" go away. They only ask you to sign in with a Microsoft account; nothing is turned off.' $false
     New-Field $T 'NoDeviceApps' 'toggle' 'Don''t install device apps' 'Windows stops downloading manufacturer apps when you connect a mouse, keyboard or headset. Drivers still install.' $false
+    $backgroundOff = (Get-RegValue "$P\AppPrivacy" 'LetAppsRunInBackground') -eq 2
+    New-Field $T 'NoBackgroundApps' 'toggle' 'Stop Store apps from running in the background' 'Apps from the Microsoft Store close for real when you close them, which saves battery and data. Programs installed from a website are not affected.' $false @{
+        warn = 'Store apps like WhatsApp, Phone Link and Teams only show notifications while they are open.'
+        badge = $(if ($backgroundOff) { 'Already off' }); badgeBrush = 'Ok' }
     New-Field $T 'NoWpbt' 'toggle' 'Block programs from the motherboard' 'Apps like Armoury Crate and Lenovo Vantage stop installing themselves at startup. Only a Windows setting: the BIOS is not touched, and formatting brings it back to on.' $false
 
     if ($appRows) {
@@ -1813,11 +2025,23 @@ function Get-Fields {
 
     New-Field $L 'Theme' 'choice' 'Theme' 'Light or dark for Windows and apps, with the matching Windows wallpaper. Windows Spotlight is turned off.' '' @{ options = (Get-ChoiceOptions $themeIds $themeNames) }
     if ($isWin11) { New-Field $L 'Taskbar' 'choice' 'Taskbar icons' 'Where the Start button and the app icons sit.' '' @{ options = (Get-ChoiceOptions $taskbarIds $taskbarNames) } }
+    # Windows 11 got the choice back in 23H2; Windows 10 always had it
+    if (-not $isWin11 -or $build -ge 22631) {
+        New-Field $L 'TaskbarCombine' 'choice' 'Combine taskbar buttons' "Windows of the same app share one button. With Never, each window gets its own button with its name. Now: $($combineNames[(Get-TaskbarCombine) + 1].ToLower())." '' @{ options = (Get-ChoiceOptions $combineIds $combineNames) }
+    }
     New-Field $L 'Search' 'choice' 'Search on the taskbar' 'Hidden, just the icon, or the full search box.' '' @{ options = (Get-ChoiceOptions $searchIds $searchNames) }
     New-Field $L 'TaskView' 'choice' 'Task View button' 'Shows your open windows and desktops. Win+Tab works either way.' '' @{ options = (Get-ChoiceOptions $taskViewIds $taskViewNames) }
     New-Field $L 'ClearPins' 'toggle' 'Unpin everything from the taskbar' 'Removes every pinned icon, File Explorer and Edge included. Nothing is uninstalled.' $false
     if ($isWin11) { New-Field $L 'ClassicMenu' 'toggle' 'Classic right-click menu' 'The full menu opens right away, without "Show more options".' $false }
     New-Field $L 'NoSnap' 'toggle' 'Turn off Snap windows' 'Windows stop resizing when you drag them to the screen edges, and the Snap layouts menu goes away.' $false
+    $transparencyOff = (Get-RegValue $PersonalizeKey 'EnableTransparency') -eq 0
+    New-Field $L 'NoTransparency' 'toggle' 'Turn off transparency' 'Start, the taskbar and some windows become solid instead of see-through. Less work for the graphics card on older PCs.' $false @{
+        badge = $(if ($transparencyOff) { 'Already off' }); badgeBrush = 'Ok' }
+    New-Field $L 'NoAnimations' 'toggle' 'Turn off animations' 'Windows open, close, minimize and maximize at once, without fading or sliding. Windows feels faster on older PCs.' $false @{
+        badge = $(if (-not (Test-AnimationsOn)) { 'Already off' }); badgeBrush = 'Ok' }
+    New-Field $L 'DesktopIcons' 'checklist' 'Icons on the Desktop' 'Check the ones to show. The ones you leave unchecked stay as they are.' @() @{
+        items = @($DesktopIcons.Keys | ForEach-Object { [ordered]@{ value = $_; label = $DesktopIcons[$_].Label; note = $DesktopIcons[$_].Note; group = ''
+            status = $(if (Test-DesktopIconShown $_) { 'Already on the Desktop' } else { '' }) } }) }
 
     New-Field $E 'ShowExtensions' 'toggle' 'Show file extensions' 'File names show their end, like .txt and .exe, so you can tell files apart.' $false
     New-Field $E 'ShowHidden' 'toggle' 'Show hidden files' 'Hidden files and folders show up. Protected system files stay hidden.' $false
@@ -1829,6 +2053,20 @@ function Get-Fields {
 
     Get-DisplayFields
 
+    if (-not $inDomain) {
+        $pc = Get-PcNames
+        $nowName = if ($pc.Pending) { "$($pc.Now), and $($pc.Pending) after restarting" } else { $pc.Now }
+        New-Field $U 'PcName' 'text' 'Rename this PC' "Now: $nowName. This is the name other devices see on your network and in Bluetooth. Up to 15 letters, numbers and hyphens. It changes after restarting, and Undo gives the old name back." '' @{
+            placeholder = 'Office-PC'; validate = 'pcname'; optional = $true; invalid = 'Use up to 15 letters, numbers and hyphens' }
+    }
+    if (Test-StorageSenseBlocked) {
+        New-Field $U 'StorageSenseInfo' 'info' 'Clean up the disk by itself' 'Storage Sense is turned off by a policy on this PC, so it can''t be turned on here.' $null @{ status = 'warn' }
+    } elseif (Test-StorageSenseOn) {
+        New-Field $U 'StorageSenseInfo' 'info' 'Clean up the disk by itself' 'Storage Sense is already on. What it deletes is in Settings → System → Storage → Storage Sense.' $null @{ status = 'ok' }
+    } else {
+        New-Field $U 'StorageSense' 'toggle' 'Clean up the disk by itself' 'Turns on Storage Sense. Once a month Windows deletes temporary files that apps don''t use, and files that have been in the Recycle Bin for more than 30 days.' $false @{
+            warn = 'Files left in the Recycle Bin for 30 days are deleted for good. Your Downloads folder and your OneDrive files are never touched.' }
+    }
     New-Field $U 'ClipboardHistory' 'toggle' 'Clipboard history' 'Win+V shows the things you copied before.' $false
     if ($hasEndTask) { New-Field $U 'EndTask' 'toggle' 'End task on the taskbar' 'Right-click a frozen app on the taskbar to close it.' $false }
     New-Field $U 'NoStickyKeys' 'toggle' 'Turn off the Sticky Keys prompt' 'No prompt when you press Shift five times. Sticky Keys is still in Settings.' $false
@@ -1891,6 +2129,7 @@ function Read-FieldsFromConsole($Fields, $Values) {
         if ($f.tab -ne $tab) { Write-Host "`n  $($f.tab)" -ForegroundColor Cyan; $tab = $f.tab }
         switch ($f.kind) {
             'header' { Write-Host "  $($f.label) · $($f.desc)" -ForegroundColor DarkCyan }
+            'info'   { Write-Host "  $($f.label): $($f.desc)" -ForegroundColor DarkGray }
             'toggle' { $Values[$f.id] = Ask "$($f.label)?" ([bool]$f.default) }
             'checklist' {
                 $rows = @($f.items | ForEach-Object { [pscustomobject]@{ Group = $_.group; Label = $_.label; Note = $_.note; Checked = $_.checked; Value = $_.value } })
@@ -1899,6 +2138,14 @@ function Read-FieldsFromConsole($Fields, $Values) {
             'text' {
                 $question = "$($f.label)$(if ($f.optional) { ', Enter skips' }):"
                 if ($f.validate -eq 'url') { $Values[$f.id] = "$(Read-Url $question ([bool]$f.optional))" }
+                elseif ($f.validate -eq 'pcname') {
+                    Write-Host "  $($f.desc)" -ForegroundColor DarkGray
+                    while ($true) {
+                        $answer = "$(Read-Host "    $question")".Trim()
+                        if ($answer -eq '' -or $answer -match $PcNamePattern) { $Values[$f.id] = $answer; break }
+                        Write-Host "    $($f.invalid)." -ForegroundColor DarkYellow
+                    }
+                }
                 else {
                     $family = if ($f.validate -eq 'ipv6') { 'InterNetworkV6' } else { 'InterNetwork' }
                     $Values[$f.id] = "$(Read-IP $question $family ([bool]$f.optional))"
@@ -1978,6 +2225,15 @@ if ($dnsV4 -and "$($values.DnsAllAdapters)" -eq 'False') {
 }
 $dohTemplate = "$($values.DohTemplate)".Trim()
 if ($dohTemplate -and ($dohTemplate -notmatch $UrlPattern -or -not $isWin11)) { $dohTemplate = '' }
+# Power mode: only the power source in use now (Get-PowerModeField); if the charger was plugged in or out
+# after the page was read, the mode picked there is for the other one and is not applied
+$powerModeKey = if ($hasBattery -and (Test-OnBattery)) { 'dc' } else { 'ac' }
+$powerModePick = "$($values["PowerMode-$powerModeKey"])"
+if ($Answers -and -not $powerModePick -and @($json.PSObject.Properties | Where-Object { $_.Name -like 'PowerMode-*' -and "$($_.Value)" }).Count) {
+    Write-Host '  Power mode: the charger was plugged in or out after the page was read, so the power mode stays as it is.' -ForegroundColor DarkYellow
+}
+$pcName = "$($values.PcName)".Trim()
+if ($pcName -and $pcName -notmatch $PcNamePattern) { Write-Host "  Not a valid PC name, skipped: $pcName" -ForegroundColor DarkYellow; $pcName = '' }
 $flag = { param($id) [bool]$values[$id] }
 $opt = [ordered]@{
     Telemetry = & $flag 'Telemetry'; Suggestions = & $flag 'Suggestions'
@@ -1991,6 +2247,12 @@ $opt = [ordered]@{
     Taskbar = $(if ($taskbarIds -contains "$($values.Taskbar)") { "$($values.Taskbar)" } else { 'Keep' })
     Search = $(if ($searchIds -contains "$($values.Search)") { "$($values.Search)" } else { 'Keep' })
     TaskView = $(if ($taskViewIds -contains "$($values.TaskView)") { "$($values.TaskView)" } else { 'Keep' })
+    TaskbarCombine = $(if ($combineIds -contains "$($values.TaskbarCombine)") { "$($values.TaskbarCombine)" } else { 'Keep' })
+    NoTransparency = & $flag 'NoTransparency'; NoAnimations = & $flag 'NoAnimations'
+    DesktopIcons = @(@($values.DesktopIcons) | Where-Object { $DesktopIcons.Contains("$_") } | ForEach-Object { "$_" })
+    NoBackgroundApps = & $flag 'NoBackgroundApps'; StorageSense = & $flag 'StorageSense'
+    PcName = $(if ($pcName) { $pcName } else { 'Keep' })
+    PowerMode = $(if ($PowerModeIds.Contains($powerModePick)) { $powerModePick } else { 'Keep' })
     ClearPins = & $flag 'ClearPins'; NoStartAds = & $flag 'NoStartAds'; BatteryPercent = & $flag 'BatteryPercent'
     ShowExtensions = & $flag 'ShowExtensions'; HideFrequent = & $flag 'HideFrequent'; UnpinMusic = & $flag 'UnpinMusic'
     HideRecent = & $flag 'HideRecent'; ShowHidden = & $flag 'ShowHidden'; NoFolderSniff = & $flag 'NoFolderSniff'
@@ -2006,7 +2268,7 @@ $opt = [ordered]@{
 
 $chosen = @($opt.Keys | Where-Object {
     $v = $opt[$_]
-    if ($v -is [bool]) { $v } elseif ($_ -in 'RemoveApps', 'NoAi') { @($v).Count -gt 0 } else { "$v" -ne 'Keep' }
+    if ($v -is [bool]) { $v } elseif ($_ -in 'RemoveApps', 'NoAi', 'DesktopIcons') { @($v).Count -gt 0 } else { "$v" -ne 'Keep' }
 })
 if (-not $chosen) { Write-Host "`n  Nothing was selected, so nothing was changed." -ForegroundColor DarkGray; return }
 
@@ -2020,11 +2282,13 @@ $labels = @{
     NoMouseAccel = 'No acceleration'; NoStickyKeys = 'No Sticky Keys'; DNS = 'DNS'
     NoDeviceApps = 'No device apps'; NoWpbt = 'No WPBT'; NoRecall = 'No Recall'; NoAi = 'AI features'; NoEdgeShortcut = 'No Edge shortcut'; NumLock = 'Num Lock'; NoFastStartup = 'No Fast Startup'; BatteryPercent = 'Battery %'; ShowHidden = 'Hidden files'
     NoFolderSniff = 'No folder discovery'; VerboseBsod = 'Detailed blue screen'; NoHibernate = 'No hibernation'; NoNewAppAlert = 'No "new app" prompt'; Power = 'Power'
+    TaskbarCombine = 'Combine taskbar buttons'; NoTransparency = 'No transparency'; NoAnimations = 'No animations'; DesktopIcons = 'Desktop icons'
+    NoBackgroundApps = 'No Store apps in the background'; StorageSense = 'Storage Sense'; PcName = 'PC name'; PowerMode = 'Power mode'
 }
 $answerLines = @()      # also written to the log file
 if ($chosen) {
     # Only what was chosen, with the names the panel shows
-    $names = @{ Display = 'Screen'; Power = 'Screen and sleep times'; DNS = 'DNS servers' }
+    $names = @{ Display = 'Screen'; Power = 'Screen and sleep times'; DNS = 'DNS servers'; PowerMode = 'Power mode' }
     foreach ($f in $fields) { if (-not $names.ContainsKey($f.id)) { $names[$f.id] = $f.label } }
     # From the panel you already reviewed them: only the log file gets the list
     if (-not $Answers) { Write-Host "`n  What will be done:" -ForegroundColor Cyan }
@@ -2036,6 +2300,10 @@ if ($chosen) {
                 elseif ($key -eq 'Taskbar')  { $taskbarNames[[array]::IndexOf($taskbarIds, $value)] }
                 elseif ($key -eq 'Search')   { $searchNames[[array]::IndexOf($searchIds, $value)] }
                 elseif ($key -eq 'TaskView') { $taskViewNames[[array]::IndexOf($taskViewIds, $value)] }
+                elseif ($key -eq 'TaskbarCombine') { $combineNames[[array]::IndexOf($combineIds, $value)] }
+                elseif ($key -eq 'PowerMode') { $PowerModeNames[$value] }
+                elseif ($key -eq 'DesktopIcons') { @($value | ForEach-Object { $DesktopIcons[$_].Label }) -join ', ' }
+                elseif ($key -eq 'PcName') { 'a new name' }      # these lines go to the log file, which has no PC name
                 elseif ($key -eq 'RemoveApps') { @($value | ForEach-Object { Get-AppLabel $_ } | Select-Object -Unique) -join ', ' }
                 elseif ($key -eq 'NoAi') { @($value | ForEach-Object { $AiFeatures[$_].Label }) -join ', ' }
                 else { $value }
@@ -2102,6 +2370,7 @@ if ($opt.RootFolders) { Invoke-Step 'Folders in the drive root (inetpub and Perf
 if ($opt.NoDeviceApps) { Invoke-Step 'Manufacturer apps for devices'                   { Disable-DeviceMetadata } }
 if ($opt.NoWpbt)       { Invoke-Step 'Firmware programs (WPBT)'                   { Disable-Wpbt } }
 if ($opt.HideAreas) { Invoke-Step 'Windows Security: hiding Microsoft account areas'  { Hide-SecurityAccountAreas } }
+if ($opt.NoBackgroundApps) { Invoke-Step 'Store apps in the background' { Disable-BackgroundApps } }
 
 # --- Personalization
 if ($opt.Theme -ne 'Keep') {
@@ -2118,7 +2387,14 @@ if ($opt.Search -ne 'Keep') {
 if ($opt.TaskView -ne 'Keep') {
     Invoke-Step 'Task View button' { Set-TaskViewButton ($opt.TaskView -eq 'Show') }
 }
+if ($opt.TaskbarCombine -ne 'Keep') {
+    # Index in $combineIds minus 1 = TaskbarGlomLevel (Always = 0, WhenFull = 1, Never = 2)
+    Invoke-Step 'Taskbar buttons' { Set-TaskbarCombine ([array]::IndexOf($combineIds, $opt.TaskbarCombine) - 1) }
+}
 if ($opt.ClearPins) { Invoke-Step 'Removing pinned icons from the taskbar' { Clear-TaskbarPins } }
+if ($opt.DesktopIcons) { Invoke-Step 'Desktop icons' { Show-DesktopIcons $opt.DesktopIcons } }
+if ($opt.NoTransparency) { Invoke-Step 'Transparency effects' { Disable-Transparency } }
+if ($opt.NoAnimations) { Invoke-Step 'Animation effects' { Disable-Animations } }
 if ($opt.NoStartAds) { Invoke-Step 'Ad shortcuts in Start' { Remove-StartAdPins } }
 if ($opt.BatteryPercent) { Invoke-Step 'Battery percentage' { Enable-BatteryPercentage } }
 if ($opt.ShowExtensions -or $opt.HideFrequent -or $opt.HideRecent) {
@@ -2134,6 +2410,8 @@ if ($opt.NoSnap) { Invoke-Step 'Snap windows' { Disable-SnapWindows } }
 if ($opt.ThinBorder) { Invoke-Step 'Window resize border' { Set-ThinBorder } }
 
 # --- System
+if ($opt.PcName -ne 'Keep') { Invoke-Step 'PC name' { Rename-ThisPC $opt.PcName } }
+if ($opt.StorageSense) { Invoke-Step 'Storage Sense' { Enable-StorageSense } }
 if ($opt.LongPaths -or $opt.EndTask -or $opt.Sudo -or $opt.ClipboardHistory -or $opt.NoMouseAccel -or $opt.NoStickyKeys) {
     Invoke-Step 'System tweaks' {
         if ($opt.LongPaths)        { Enable-LongPaths }
@@ -2148,6 +2426,7 @@ if ($opt.NumLock)       { Invoke-Step 'Num Lock' { Enable-NumLockAtStartup } }
 if ($opt.NoFastStartup) { Invoke-Step 'Fast Startup' { Disable-FastStartup } }
 if ($opt.VerboseBsod) { Invoke-Step 'Detailed blue screen' { Enable-VerboseBsod } }
 if ($opt.NoHibernate) { Invoke-Step 'Hibernation' { Disable-Hibernation } }
+if ($opt.PowerMode -ne 'Keep') { Invoke-Step 'Power mode' { Set-PowerMode $opt.PowerMode } }
 if ($power.Count) { Invoke-Step 'Screen, sleep and hibernation times' { Set-PowerTimeouts $power } }
 
 # --- Network

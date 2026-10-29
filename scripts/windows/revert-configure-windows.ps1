@@ -8,7 +8,7 @@
     What does NOT come back on its own:
         - removed apps .............. reinstall from the Microsoft Store
         - OneDrive .................. winget install Microsoft.OneDrive
-        - theme, taskbar alignment, search and Task View, extensions, folders ... through Windows Settings
+        - theme, taskbar alignment, combining, search and Task View, extensions, folders, power mode ... through Windows Settings
         - taskbar pins .............. right-click the app → "Pin to taskbar"
         - volume .................... on the taskbar volume icon
         - hidden files, battery % ... through Windows Settings
@@ -444,6 +444,68 @@ function Show-Inetpub {
     } else { Write-Skip 'There is no inetpub folder' }
 }
 
+# Store apps can run in the background again (each app's own switch in Settings is back in charge)
+function Remove-BackgroundAppsPolicy { Remove-Reg "$P\AppPrivacy" 'LetAppsRunInBackground' }
+
+# Transparency effects back on (Windows default)
+function Restore-Transparency {
+    $key = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize'
+    if ((Get-ItemProperty $key -Name EnableTransparency -ErrorAction SilentlyContinue).EnableTransparency -eq 0) {
+        Set-ItemProperty $key -Name EnableTransparency -Value 1 -Type DWord
+        Write-Done 'Transparency effects: on'
+    } else { Write-Skip 'Transparency effects were already on' }
+}
+
+# Animation effects back on, through the same Windows calls Configure-Windows used to turn them off:
+# SPI_SETCLIENTAREAANIMATION (0x1043) and SPI_SETANIMATION (0x0049, minimize and maximize).
+function Restore-Animations {
+    if (-not ('RevWin.Spi' -as [type])) {
+        Add-Type -Namespace RevWin -Name Spi -MemberDefinition @'
+[DllImport("user32.dll", SetLastError = true)]
+public static extern bool SystemParametersInfo(uint uiAction, uint uiParam, System.IntPtr pvParam, uint fWinIni);
+'@
+    }
+    [void][RevWin.Spi]::SystemParametersInfo(0x1043, 0, [IntPtr]1, 3)
+    $info = [Runtime.InteropServices.Marshal]::AllocHGlobal(8)
+    try {
+        [Runtime.InteropServices.Marshal]::WriteInt32($info, 0, 8)
+        [Runtime.InteropServices.Marshal]::WriteInt32($info, 4, 1)
+        [void][RevWin.Spi]::SystemParametersInfo(0x0049, 8, $info, 3)
+    } finally { [Runtime.InteropServices.Marshal]::FreeHGlobal($info) }
+    Set-ItemProperty 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name TaskbarAnimations -Value 1 -Type DWord
+    Write-Done 'Animation effects: on'; Write-Host '  The taskbar animates again after restarting the PC.' -ForegroundColor DarkGray
+}
+
+# Hides again only the Desktop icons Configure-Windows turned on (it saved which ones)
+function Restore-DesktopIcons {
+    $file = Join-Path $env:ProgramData 'TidyWin\desktop-icons.json'
+    if (-not (Test-Path $file)) { Write-Skip 'TidyWin did not add Desktop icons'; return }
+    $key = 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel'
+    foreach ($clsid in @(Get-Content $file -Raw | ConvertFrom-Json)) { Set-ItemProperty $key -Name $clsid -Value 1 -Type DWord -ErrorAction SilentlyContinue }
+    Remove-Item $file -Force -ErrorAction SilentlyContinue
+    Write-Done 'Desktop icons: back as they were'; Write-Host '  The Desktop updates after restarting the PC, or press F5 on it.' -ForegroundColor DarkGray
+}
+
+# Storage Sense off, only when Configure-Windows turned it on (it saved a file when it did)
+function Restore-StorageSense {
+    $file = Join-Path $env:ProgramData 'TidyWin\storage-sense.json'
+    Set-ItemProperty 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\StorageSense\Parameters\StoragePolicy' -Name '01' -Value 0 -Type DWord -ErrorAction SilentlyContinue
+    Remove-Item $file -Force -ErrorAction SilentlyContinue
+    Write-Done 'Storage Sense: off'
+}
+
+# The PC name Configure-Windows replaced first (it saved it). Windows uses it after a restart.
+function Restore-PcName([string]$Name) {
+    $file = Join-Path $env:ProgramData 'TidyWin\pc-name.json'
+    $next = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ComputerName' -Name ComputerName -ErrorAction SilentlyContinue).ComputerName
+    if ($next -ceq $Name) { Remove-Item $file -Force -ErrorAction SilentlyContinue; Write-Skip "The PC is already called $Name"; return }
+    try {
+        Rename-Computer -NewName $Name -Force -WarningAction SilentlyContinue -ErrorAction Stop
+        Remove-Item $file -Force -ErrorAction SilentlyContinue
+        Write-Done "PC name: $Name"; Write-Host '  Takes effect after restarting the PC.' -ForegroundColor DarkGray
+    } catch { Write-Host "  [ERROR] Could not rename the PC: $($_.Exception.Message)" -ForegroundColor Red }
+}
+
 function Remove-EdgePolicies {
     Remove-Item 'HKLM:\SOFTWARE\Policies\Microsoft\Edge' -Recurse -Force -ErrorAction SilentlyContinue
     # Desktop shortcut policy (the shortcut itself is not recreated; Edge adds it again on its next update)
@@ -476,6 +538,7 @@ $fields = @(
 if (Test-Path (Join-Path $tidyDir 'start-unpinned.json')) {
     $fields += New-Field $Ap 'StartPins' 'toggle' 'Pin the ad shortcuts back to Start' 'The shortcuts that were unpinned go back to Start, if their apps are installed.' $false
 }
+$fields += New-Field $Ap 'BackgroundApps' 'toggle' 'Let Store apps run in the background again' 'Apps from the Microsoft Store can keep running and notify you after you close them, the Windows default.' $false
 $fields += @(
     New-Field $Fe 'HomeGallery' 'toggle' 'Bring Home and Gallery back' 'They return to the sidebar, File Explorer opens in Home again and Music goes back to Quick access.' $false
     New-Field $Fe 'ContextMenu' 'toggle' 'Bring the new right-click menu back' 'Windows 11 shows its own right-click menu again, with "Show more options".' $false
@@ -484,6 +547,21 @@ $fields += @(
     New-Field $Fe 'Inetpub' 'toggle' 'Show the inetpub folder' 'The folder on drive C: becomes visible again.' $false
     New-Field $Lk 'Border' 'toggle' 'Bring the window border back' 'The default border around windows comes back after signing out.' $false
     New-Field $Lk 'Snap' 'toggle' 'Turn Snap windows back on' 'Dragging a window to the edge of the screen arranges it again, after signing out.' $false
+    New-Field $Lk 'Transparency' 'toggle' 'Turn transparency back on' 'Start, the taskbar and some windows are see-through again, the Windows default.' $false
+    New-Field $Lk 'Animations' 'toggle' 'Turn animations back on' 'Windows fade and slide again when they open, close, minimize and maximize, the Windows default.' $false
+)
+if (Test-Path (Join-Path $tidyDir 'desktop-icons.json')) {
+    $fields += New-Field $Lk 'DesktopIcons' 'toggle' 'Hide the Desktop icons TidyWin added' 'Only the icons TidyWin turned on go away. Icons you turned on yourself stay.' $false
+}
+$savedPcName = $null
+try { $savedPcName = "$((Get-Content (Join-Path $tidyDir 'pc-name.json') -Raw -ErrorAction Stop | ConvertFrom-Json).name)" } catch { }
+if ($savedPcName) {
+    $fields += New-Field $Sy 'PcName' 'toggle' "Give this PC its old name back ($savedPcName)" 'Other devices on your network and in Bluetooth see the old name again, after restarting the PC.' $false
+}
+if (Test-Path (Join-Path $tidyDir 'storage-sense.json')) {
+    $fields += New-Field $Sy 'StorageSense' 'toggle' 'Turn Storage Sense off' 'Windows stops cleaning up temporary files and the Recycle Bin by itself. TidyWin turned it on, so only that is undone.' $false
+}
+$fields += @(
     New-Field $Sy 'FastStartup' 'toggle' 'Turn Fast Startup back on' 'Windows starts faster after being shut down, the Windows default.' $false
     if (Test-HibernationOff) { New-Field $Sy 'Hibernation' 'toggle' 'Turn hibernation back on' 'The Hibernate option comes back, and Fast Startup works again. hiberfil.sys takes space on drive C: again.' $false }
     New-Field $Sy 'NumLock' 'toggle' 'Num Lock off at startup' 'Num Lock starts off again, the Windows default.' $false
@@ -523,6 +601,12 @@ if ($v.NewAppAlert)          { Write-Step '"New app installed" prompt back';    
 if ($v.Inetpub)              { Write-Step 'Inetpub folder visible again';           Show-Inetpub }
 if ($v.Border)               { Write-Step 'Window border back to default';          Restore-Border }
 if ($v.Snap)                 { Write-Step 'Snap windows back on';                   Restore-SnapWindows }
+if ($v.Transparency)         { Write-Step 'Transparency back on';                   Restore-Transparency }
+if ($v.Animations)           { Write-Step 'Animations back on';                     Restore-Animations }
+if ($v.DesktopIcons)         { Write-Step 'Desktop icons TidyWin added';            Restore-DesktopIcons }
+if ($v.BackgroundApps)       { Write-Step 'Store apps in the background';           Remove-BackgroundAppsPolicy; Write-Done 'Back to the Windows default' }
+if ($v.PcName)               { Write-Step 'Old PC name';                            Restore-PcName $savedPcName }
+if ($v.StorageSense)         { Write-Step 'Storage Sense off';                      Restore-StorageSense }
 if ($v.Hibernation)          { Write-Step 'Hibernation back on';                    Restore-Hibernation }      # before Fast Startup, which needs it
 if ($v.FastStartup)          { Write-Step 'Fast Startup back on';                  Restore-FastStartup; Write-Done 'Back to the Windows default' }
 if ($v.NumLock)              { Write-Step 'Num Lock off at startup';                Restore-NumLock; Write-Done 'Back to the Windows default' }

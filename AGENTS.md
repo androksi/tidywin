@@ -57,12 +57,13 @@ The menu is `Get-Menu` in `scripts/TidyWin.ps1` (section 1). Every entry is `New
 | Set up | Apps (`apps`) | `apps/configure-apps.ps1` | 106 apps in category tabs, WinGet/Store/Windows feature; **Search** tab (`-Search`) |
 | Set up | Fonts (`fonts`) | `fonts/install-fonts.ps1` | 19 fonts; `-Revert` undoes |
 | Set up | Browsers (`browsers`) | `browsers/configure-chrome.ps1`, `configure-brave.ps1`, `configure-firefox.ps1` | One page, a switch per browser; each script describes its own part |
+| Maintenance | Startup apps (`startup`) | `windows/manage-startup.ps1` | Two checklists: stop starting / start again. Writes `StartupApproved` like Task Manager; Windows Security and Store apps are not listed |
 | Maintenance | Remove apps (`uninstall`) | `apps/uninstall-apps.ps1` | Official uninstallers + leftovers (install folder, user profile, registry keys, shortcuts; folders go to the Recycle Bin; a container left empty, like `.config` or `D:\Games`, goes too) |
 | Maintenance | Disk space (`cleanup`) | `windows/clean-windows.ps1` | Measures each item while the page loads |
 | Maintenance | Fix Windows (`repair`) | `windows/repair-windows.ps1` | DISM, sfc, disk check |
 | Maintenance | Internet connection (`network-reset`) | `windows/reset-network.ps1` | Quick / Full; keeps the DNS |
 | Maintenance | Firewall (`firewall`) | `windows/manage-firewall.ps1` | Tabs: Delete rules, Block an app, Networks, Backup |
-| Back up | Create (`backup`) | `drivers/backup-drivers.ps1 -Export`, `apps/backup-apps.ps1 -Export`, `windows/backup-wifi.ps1 -Export` | Three steps, one page |
+| Back up | Create (`backup`) | `drivers/backup-drivers.ps1 -Export`, `apps/backup-apps.ps1 -Export`, `windows/backup-wifi.ps1 -Export`, `windows/backup-bitlocker.ps1 -Export` | Four steps, one page; the BitLocker key has nothing to restore |
 | Back up | Restore (`restore`) | same three with `-Import` (drivers → Wi-Fi → apps) | |
 | Undo | Windows (`windows-revert`) | `windows/revert-configure-windows.ps1` | |
 | Undo | Browsers (`browsers-revert`) | the three browser scripts with `-Revert` | |
@@ -98,7 +99,7 @@ Every script also runs on its own in a console (arrow-key menus), without the pa
 | `choice` | buttons side by side (`options = @(Opt value label, ...)`); clicking the chosen one unchooses it | value or `''` |
 | `select` | combo box; `parent` + `optionsBy` = options that depend on another select | value or `''` |
 | `checklist` | list of checkboxes with "Select all" per group; items: `value, label, note, warn, status, statusBrush, statusTip, group, flag` | array of values |
-| `text` | text box; `validate = 'ipv4' \| 'ipv6' \| 'url'`, `optional`, `placeholder` | string |
+| `text` | text box; `validate = 'ipv4' \| 'ipv6' \| 'url' \| 'pcname'`, `invalid` (the error text), `optional`, `placeholder` | string |
 | `path` | text + Browse; `pick = 'file'` (with `filter`) or a folder; `required` | string |
 | `search` | box + button; the page script runs again with `-Search`/`-SearchOut` (Apps only today) | array of `source\|id\|name` |
 | `header` | a title inside a tab | — |
@@ -123,7 +124,7 @@ Copy an existing script of the same shape (`windows/reset-network.ps1`, `windows
 
 1. `#Requires -RunAsAdministrator`, then a header comment: one line saying what it does, **HOW TO RUN**, what each option does in plain words, where state is saved, **FILE LAYOUT**.
 2. `param([string]$Describe, [string]$Answers)` (+ `-Revert`, `-Export`/`-Import`, `-Search`/`-SearchOut` where needed).
-3. `#region PANEL` — copied between scripts but **not byte-identical**. Twelve scripts share the base copy (`reset-network.ps1` is a good reference): `Write-PanelHost`, `Request-Panel`, `Write-Loading`, the `Write-Host`/`Read-Host` overrides, `Opt`, `New-Field`, `Write-OptionsPage`, `Read-Options`, `Ask`. The three `backup-*` scripts add `when` lists and start a select on its default instead of always offering "Skip"; `manage-firewall.ps1` adds the console `guide` case. Change the shared parts in every script and keep those extras.
+3. `#region PANEL` — copied between scripts but **not byte-identical**. Thirteen scripts share the base copy (`reset-network.ps1` is a good reference): `Write-PanelHost`, `Request-Panel`, `Write-Loading`, the `Write-Host`/`Read-Host` overrides, `Opt`, `New-Field`, `Write-OptionsPage`, `Read-Options`, `Ask`. The four `backup-*` scripts add `when` lists and start a select on its default instead of always offering "Skip"; `manage-firewall.ps1` adds the console `guide` case. Change the shared parts in every script and keep those extras.
 4. `#region 1. HELPERS` — `Write-Step`, `Choose` (arrow-key menu, numbered fallback), `Ask`, `Write-Result` (`[OK]`, `[WARNING]`, `[ERROR]`), then the page's own helpers. End with the PowerShell 7 guard (`if ($PSVersionTable.PSEdition -ne 'Desktop') { ...; return }`).
 5. `#region 2. ...` — the changes, one function per action.
 6. `#region 3. EXECUTION` — `Write-Loading` → read the PC → build `$fields` → `if ($Describe) { Write-OptionsPage $Describe $fields $notes; return }` → `$v = Read-Options $fields $Answers` → "Nothing was selected, so nothing was changed." when empty → backup/restore point when the change is risky → apply with `Write-Step`/`Write-Result` → "Done." and how to undo.
@@ -182,6 +183,9 @@ There are no unit tests. Test by running the real code against the real PC **rea
 | `%ProgramData%\TidyWin\uninstall-backup\<date>\` | Remove apps | Exported registry keys and tasks + `deleted.txt`; folders and shortcuts go to the Recycle Bin when they fit |
 | `%ProgramData%\TidyWin\fonts.json` | Fonts | Fonts installed by TidyWin (for `-Revert`) |
 | `%ProgramData%\TidyWin\start-unpinned.json` | Windows → Start ad shortcuts | What was unpinned |
+| `%ProgramData%\TidyWin\desktop-icons.json` | Windows → Desktop icons | The icons TidyWin turned on (Undo hides only these) |
+| `%ProgramData%\TidyWin\storage-sense.json` | Windows → Storage Sense | Present only when TidyWin turned it on (Undo turns off only then) |
+| `%ProgramData%\TidyWin\pc-name.json` | Windows → Rename this PC | The first name TidyWin replaced |
 | Desktop `TidyWin log <date>.txt` | Windows | Log of everything applied (no user or PC name) |
 | `HKLM:\SOFTWARE\Policies\...` | Windows, browsers, Updates | Policies; Firefox `Preferences`/`ExtensionSettings` are JSON objects merged entry by entry (`pref:`/`ext:` names) |
 | `<Firefox profile>\chrome\userChrome.css` | Firefox menus | Block between `/* TidyWin: hidden menu lines (start/end) */` |
