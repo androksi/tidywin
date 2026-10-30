@@ -294,6 +294,7 @@ function Restore-Suggestions {
                    'SubscribedContent-338393Enabled', 'SubscribedContent-353694Enabled', 'SubscribedContent-353696Enabled') {
         Set-ItemProperty -Path $CDM -Name $n -Value 1 -Type DWord -ErrorAction SilentlyContinue
     }
+    Remove-Reg 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer' 'AllowOnlineTips'
     Remove-Reg 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\UserProfileEngagement' 'ScoobeSystemSettingEnabled'
     Remove-Reg 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced' 'Start_IrisRecommendations','ShowSyncProviderNotifications'
 }

@@ -611,6 +611,8 @@ function Disable-Suggestions {
     Set-Option 'Tips and tricks' 'off' (RegValue $CDM 'SoftLandingEnabled' 0), (RegValue $CDM 'SubscribedContent-338389Enabled' 0)
     Set-Option 'Suggested content in Settings' 'off' (RegValue $CDM 'SubscribedContent-338393Enabled' 0),
         (RegValue $CDM 'SubscribedContent-353694Enabled' 0), (RegValue $CDM 'SubscribedContent-353696Enabled' 0)
+    # "Related support" / "Help from the web" links at the bottom of Settings pages (the "Allow Online Tips" policy)
+    Set-Option 'Online help links in Settings' 'off' (RegValue 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer' 'AllowOnlineTips' 0)
     Set-Option 'Welcome screen after updates' 'off' (RegValue $CDM 'SubscribedContent-310093Enabled' 0)
     Set-Option '"Let''s finish setting up"' 'off' (RegValue 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\UserProfileEngagement' 'ScoobeSystemSettingEnabled' 0)
     Set-Option 'OneDrive ads in File Explorer' 'off' (RegValue $ADV 'ShowSyncProviderNotifications' 0)
@@ -1993,7 +1995,7 @@ function Get-Fields {
         default  { @{} }
     }
     New-Field $T 'Telemetry' 'toggle' 'Turn off telemetry' 'Windows stops sending usage and diagnostic data to Microsoft. Widgets are turned off too. Voice typing (Win+H) may stop working, as many languages need online speech.' $false $telemetryBadge
-    New-Field $T 'Suggestions' 'toggle' 'Turn off ads and suggestions' 'No tips, no suggestions in Start and Settings, and no apps like Candy Crush installed without asking.' $false
+    New-Field $T 'Suggestions' 'toggle' 'Turn off ads and suggestions' 'No tips, no suggestions in Start and Settings, no web help links in Settings, and no apps like Candy Crush installed without asking.' $false
     New-Field $T 'Edge' 'toggle' 'Quiet down Edge' 'Turns off Edge telemetry, running in the background, the sidebar, Copilot and shopping offers.' $false
     if ($isWin11) { New-Field $T 'NoRecall' 'toggle' 'Remove Recall' 'Recall saves screenshots of everything you do. It is removed and can''t be turned on again.' $false }
     if ($isWin11) {
